@@ -16,6 +16,38 @@ final class MiniPlayerViewModel: ObservableObject {
     @Published var showFullscreenAnimation: Bool = false
     @Published var animationFullscreenEnabled: Bool = false
 
+    /// Snapshot of every tracked source, for the source picker dropdown.
+    @Published var sourceSnapshots: [PlaybackSource: NowPlayingSnapshot] = [:]
+    @Published var activeSource: PlaybackSource = .appleMusic
+
+    struct SourceItem: Identifiable {
+        let source: PlaybackSource
+        let snapshot: NowPlayingSnapshot?
+        let isActive: Bool
+        var id: String { source.rawValue }
+        var displayName: String { source.displayName }
+        var isRunning: Bool { snapshot != nil }
+    }
+
+    /// One row per enabled source, active one first.
+    var sourceItems: [SourceItem] {
+        let order: [PlaybackSource] = [.appleMusic, .spotify]
+        let settings = SettingsStore.shared
+        return order.compactMap { src in
+            let enabled = src == .appleMusic
+                ? settings.bool(["sources", "apple_music_enabled"])
+                : settings.bool(["sources", "spotify_enabled"])
+            guard enabled else { return nil }
+            return SourceItem(source: src,
+                              snapshot: sourceSnapshots[src],
+                              isActive: src == activeSource)
+        }
+    }
+
+    func selectSource(_ source: PlaybackSource) {
+        monitor?.selectSource(source)
+    }
+
     private weak var monitor: PlayerMonitor?
     private weak var scrobbler: ScrobblerService?
     private var cancellables = Set<AnyCancellable>()
@@ -56,7 +88,15 @@ final class MiniPlayerViewModel: ObservableObject {
                 guard let self else { return }
                 let edited = rawSnap.map { EditHistoryService.shared.apply($0) }
                 self.snapshot = edited
+                self.activeSource = edited?.source ?? .appleMusic
                 self.handleTrackUpdate(edited)
+            }
+            .store(in: &cancellables)
+
+        monitor.$sourceSnapshots
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] raw in
+                self?.sourceSnapshots = raw.mapValues { EditHistoryService.shared.apply($0) }
             }
             .store(in: &cancellables)
 
@@ -93,6 +133,13 @@ final class MiniPlayerViewModel: ObservableObject {
         // previous artwork until the new one is fetched, avoiding rapid
         // SwiftUI transitions that break NSViewRepresentables.
 
+        // User-chosen artwork wins over the looked-up one. If this track has a
+        // custom image, show it and skip the remote lookup entirely.
+        if let customURL = CustomArtworkStore.shared.localURL(for: snap) {
+            applyCustomArtwork(customURL)
+            return
+        }
+
         // Tell the widget immediately that the track changed, with nil artwork.
         // Otherwise it would render the new title/artist with the previous
         // track's artwork until the async lookup below completes.
@@ -127,6 +174,75 @@ final class MiniPlayerViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Show a custom image (a local file URL) as the current artwork and derive
+    /// its palette. Animation URLs are left nil so the static image is used.
+    private func applyCustomArtwork(_ url: URL) {
+        let urlStr = url.absoluteString
+        let result = ArtworkResult(artworkURL: urlStr)
+        artwork = result
+        WidgetDataManager.shared.update(snapshot: snapshot, artwork: result, palette: palette)
+        guard urlStr != lastPaletteURL else { return }
+        lastPaletteURL = urlStr
+        Task { [weak self] in
+            let palette = await ColorExtractor.shared.palette(for: urlStr)
+            await MainActor.run {
+                guard let self, self.lastPaletteURL == urlStr else { return }
+                self.palette = palette
+                WidgetDataManager.shared.update(
+                    snapshot: self.snapshot,
+                    artwork: self.artwork,
+                    palette: palette
+                )
+            }
+        }
+    }
+
+    // MARK: - Custom artwork (mini player override)
+
+    /// Whether the current track has a user-chosen artwork image.
+    var hasCustomArtwork: Bool {
+        guard let snap = snapshot else { return false }
+        return CustomArtworkStore.shared.hasCustom(for: snap)
+    }
+
+    /// The current track's custom image, for previewing in the edit popover.
+    func currentCustomArtwork() -> NSImage? {
+        guard let snap = snapshot, let url = CustomArtworkStore.shared.localURL(for: snap) else { return nil }
+        return NSImage(contentsOf: url)
+    }
+
+    /// Store `image` as the artwork for the current track and refresh the UI.
+    func setCustomArtwork(_ image: NSImage) {
+        guard let snap = snapshot else { return }
+        setCustomArtwork(image, for: snap)
+    }
+
+    /// Store `image` for a specific track. Used by the artwork picker window,
+    /// which captures the target track when it opens so the choice lands on the
+    /// right song even if playback has since advanced. `sourceURL` is the public
+    /// artwork URL when picked from the API (nil for a local file).
+    func setCustomArtwork(_ image: NSImage, for snap: NowPlayingSnapshot, sourceURL: String? = nil) {
+        CustomArtworkStore.shared.save(image: image, for: snap, sourceURL: sourceURL)
+        if let cur = snapshot,
+           CustomArtworkStore.key(for: cur) == CustomArtworkStore.key(for: snap) {
+            refreshArtworkForCurrentTrack()
+        }
+    }
+
+    /// Drop the custom artwork for the current track and fall back to lookup.
+    func removeCustomArtwork() {
+        guard let snap = snapshot else { return }
+        CustomArtworkStore.shared.remove(for: snap)
+        refreshArtworkForCurrentTrack()
+    }
+
+    /// Force artwork re-resolution for the current track (custom or looked-up).
+    private func refreshArtworkForCurrentTrack() {
+        lastArtworkKey = ""
+        lastPaletteURL = ""
+        handleTrackUpdate(snapshot)
     }
 
     func playPause() {

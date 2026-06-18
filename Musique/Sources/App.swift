@@ -29,6 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WebhookDispatcher.shared.attach(monitor: playerMonitor, scrobbler: scrobbler)
         HistoryRecorder.shared.attach(monitor: playerMonitor, scrobbler: scrobbler)
         PendingScrobbleQueue.shared.start()
+        DebugServer.shared.attach(monitor: playerMonitor)
+        if SettingsStore.shared.bool(["debug", "server_enabled"]) {
+            let port = UInt16(SettingsStore.shared.int(["debug", "server_port"]))
+            DebugServer.shared.start(port: port == 0 ? 8765 : port)
+        }
         menuBarController = MenuBarController(playerMonitor: playerMonitor, scrobbler: scrobbler)
         lockScreenController = LockScreenController(playerMonitor: playerMonitor)
         playerMonitor.start()

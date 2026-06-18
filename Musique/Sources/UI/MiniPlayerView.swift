@@ -29,7 +29,31 @@ struct MiniPlayerView: View {
         }
         .frame(width: 320, height: 505)
         .clipped()
+        .overlay { editOverlay }
         .animation(.easeInOut(duration: 0.7), value: viewModel.palette.accent)
+    }
+
+    /// In-panel edit sheet. Presented as an overlay inside the mini player's own
+    /// hosting view rather than a SwiftUI `.popover` — a popover anchored to a
+    /// view that itself lives inside the menu bar's transient NSPopover throws
+    /// during `NSPopover.show` and crashes the app.
+    @ViewBuilder
+    private var editOverlay: some View {
+        if showEditPopover {
+            ZStack {
+                Color.black.opacity(0.5)
+                    .contentShape(Rectangle())
+                    .onTapGesture { showEditPopover = false }
+                EditTrackPopover(viewModel: viewModel, isPresented: $showEditPopover)
+                    .frame(width: 290)
+                    .background(.regularMaterial,
+                                in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(.white.opacity(0.08)))
+                    .shadow(color: .black.opacity(0.4), radius: 20, y: 8)
+            }
+            .transition(.opacity)
+        }
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -50,6 +74,8 @@ struct MiniPlayerView: View {
             VStack(spacing: 0) {
                 Spacer()
                 VStack(alignment: .leading, spacing: 0) {
+                    HStack { sourceBadge(); Spacer() }
+                        .padding(.bottom, 6)
                     MarqueeText(text: viewModel.snapshot?.title.nilIfEmpty ?? L10n.miniplayerNoTrack,
                                 font: .system(size: 17, weight: .bold),
                                 color: .white)
@@ -91,8 +117,8 @@ struct MiniPlayerView: View {
                     .padding(.top, 10)
                     HStack {
                         Spacer()
+                        sourceMenuButton()
                         footerButton(icon: "pencil", action: openEdit)
-                            .editPopover(isPresented: $showEditPopover, viewModel: viewModel)
                             .disabled(viewModel.snapshot?.hasTrack != true)
                         footerButton(icon: "gearshape.fill", action: openSettings)
                         footerButton(icon: viewModel.notificationsEnabled ? "bell.fill" : "bell.slash.fill",
@@ -174,6 +200,7 @@ struct MiniPlayerView: View {
     @ViewBuilder
     private var trackInfoCentered: some View {
         VStack(spacing: 4) {
+            sourceBadge()
             MarqueeText(text: viewModel.snapshot?.title.nilIfEmpty ?? L10n.miniplayerNoTrack,
                         font: .system(size: 17, weight: .bold),
                         color: .white)
@@ -218,8 +245,8 @@ struct MiniPlayerView: View {
                 .tracking(2)
                 .foregroundStyle(.white.opacity(0.55))
             Spacer()
+            sourceMenuButton()
             iconButton("pencil", action: openEdit)
-                .editPopover(isPresented: $showEditPopover, viewModel: viewModel)
                 .disabled(viewModel.snapshot?.hasTrack != true)
             iconButton("gearshape.fill", action: openSettings)
             iconButton(viewModel.notificationsEnabled ? "bell.fill" : "bell.slash.fill",
@@ -410,6 +437,8 @@ struct MiniPlayerView: View {
     @ViewBuilder
     private var immersiveContent: some View {
         VStack(alignment: .leading, spacing: 0) {
+            HStack { sourceBadge(); Spacer() }
+                .padding(.bottom, 8)
             MarqueeText(text: viewModel.snapshot?.title.nilIfEmpty ?? L10n.miniplayerNoTrack,
                         font: .system(size: 20, weight: .heavy),
                         color: .white)
@@ -455,8 +484,8 @@ struct MiniPlayerView: View {
 
             HStack {
                 Spacer()
+                sourceMenuButton()
                 footerButton(icon: "pencil", action: openEdit)
-                    .editPopover(isPresented: $showEditPopover, viewModel: viewModel)
                     .disabled(viewModel.snapshot?.hasTrack != true)
                 footerButton(icon: "gearshape.fill", action: openSettings)
                 footerButton(icon: viewModel.notificationsEnabled ? "bell.fill" : "bell.slash.fill",
@@ -488,6 +517,38 @@ struct MiniPlayerView: View {
                 .frame(width: 36, height: 28)
         }
         .buttonStyle(.plain)
+    }
+
+    /// Dropdown that lists every tracked source with its current track, and lets
+    /// the user switch which player the mini player follows.
+    private func sourceMenuButton() -> some View {
+        Menu {
+            ForEach(viewModel.sourceItems) { item in
+                Button {
+                    viewModel.selectSource(item.source)
+                } label: {
+                    let detail: String = {
+                        guard let snap = item.snapshot, snap.hasTrack else {
+                            return L10n.tr("ไม่ได้เล่น", "Not playing")
+                        }
+                        let state = snap.isPlaying ? "▶" : "⏸"
+                        return "\(state) \(snap.title) — \(snap.artist)"
+                    }()
+                    Text("\(item.displayName)\n\(detail)")
+                    Image(systemName: item.isActive ? "checkmark.circle.fill" : item.source.sfSymbol)
+                }
+                .disabled(item.snapshot == nil)
+            }
+        } label: {
+            Image(systemName: viewModel.activeSource.sfSymbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(width: 36, height: 28)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 36, height: 28)
+        .fixedSize()
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -548,21 +609,29 @@ struct MiniPlayerView: View {
               hasAnimation else { return }
         viewModel.showFullscreenAnimation = true
     }
+
+    @ViewBuilder
+    private func sourceBadge() -> some View {
+        if let snap = viewModel.snapshot, snap.hasTrack {
+            HStack(spacing: 4) {
+                Image(systemName: snap.source.sfSymbol)
+                    .font(.system(size: 9, weight: .bold))
+                Text(snap.source.displayName)
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(.white.opacity(0.75))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(.white.opacity(0.14)))
+        }
+    }
 }
 
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
-// MARK: - Edit popover
-
-private extension View {
-    func editPopover(isPresented: Binding<Bool>, viewModel: MiniPlayerViewModel) -> some View {
-        self.popover(isPresented: isPresented, arrowEdge: .top) {
-            EditTrackPopover(viewModel: viewModel, isPresented: isPresented)
-        }
-    }
-}
+// MARK: - Edit sheet
 
 private struct EditTrackPopover: View {
     @ObservedObject var viewModel: MiniPlayerViewModel
@@ -571,6 +640,7 @@ private struct EditTrackPopover: View {
     @State private var artist: String = ""
     @State private var track: String = ""
     @State private var album: String = ""
+    @State private var customImage: NSImage?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -580,6 +650,8 @@ private struct EditTrackPopover: View {
                 Text(L10n.miniplayerEditTitle).font(.headline)
                 Spacer()
             }
+
+            artworkSection
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Track").font(.caption).foregroundStyle(.secondary)
@@ -615,8 +687,59 @@ private struct EditTrackPopover: View {
             }
         }
         .padding(16)
-        .frame(width: 320)
         .onAppear { prefill() }
+    }
+
+    @ViewBuilder
+    private var artworkSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L10n.tr("ปกเพลง", "Artwork")).font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                artworkThumbnail
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.secondary.opacity(0.25))
+                    )
+                VStack(alignment: .leading, spacing: 6) {
+                    Button(L10n.tr("ค้นหาปก…", "Browse Artwork…")) {
+                        guard let snap = viewModel.snapshot else { return }
+                        isPresented = false
+                        ArtworkPickerWindowController.shared.show(
+                            viewModel: viewModel, target: snap,
+                            targetArtworkURL: viewModel.artwork.artworkURL)
+                    }
+                    if customImage != nil {
+                        Button(L10n.tr("ใช้ปกเดิม", "Reset"), role: .destructive) {
+                            viewModel.removeCustomArtwork()
+                            customImage = nil
+                        }
+                    }
+                }
+                Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var artworkThumbnail: some View {
+        if let img = customImage {
+            Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+        } else if let s = viewModel.artwork.artworkURL, let u = URL(string: s) {
+            AsyncImage(url: u) { phase in
+                if let i = phase.image {
+                    i.resizable().aspectRatio(contentMode: .fill)
+                } else {
+                    Color.secondary.opacity(0.15)
+                }
+            }
+        } else {
+            ZStack {
+                Color.secondary.opacity(0.15)
+                Image(systemName: "music.note").foregroundStyle(.secondary)
+            }
+        }
     }
 
     private func prefill() {
@@ -624,5 +747,6 @@ private struct EditTrackPopover: View {
         artist = snap.artist
         track  = snap.title
         album  = snap.album
+        customImage = viewModel.currentCustomArtwork()
     }
 }

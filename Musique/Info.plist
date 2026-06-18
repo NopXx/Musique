@@ -29,7 +29,7 @@
 	<key>LastFMAPISecret</key>
 	<string>$(LASTFM_API_SECRET)</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Musique needs permission to control Music to read playback state and send play/pause commands.</string>
+	<string>Musique needs permission to control Apple Music and Spotify to read playback state and send play/pause commands.</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Musique reads the currently playing track info from Apple Music.</string>
 	<key>NSAudioCaptureUsageDescription</key>

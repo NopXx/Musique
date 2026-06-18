@@ -13,10 +13,19 @@ struct LockScreenPlayerView: View {
             let animURL = animationURLString.flatMap(URL.init(string:))
 
             let largeSize = min(geo.size.height * 0.40, geo.size.width * 0.38)
-            let cardWidth = min(350, geo.size.width * 0.35)
+            let cardWidth = viewModel.liqoriaStyle
+                ? min(260, geo.size.width * 0.22)
+                : min(350, geo.size.width * 0.35)
+            let liqoria = viewModel.liqoriaStyle
 
             ZStack {
-                if viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive {
+                let showLarge = !liqoria && viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
+                let showInline = liqoria || (!viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive)
+                let showClock = liqoria
+                    ? !viewModel.fullscreenAnimationActive
+                    : showLarge
+
+                if showLarge {
                     Color.clear
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -26,10 +35,13 @@ struct LockScreenPlayerView: View {
                         }
                 }
 
-                if viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive {
+                if showClock {
                     VStack {
-                        LiquidGlassClockView(glassVariant: viewModel.clockGlassStyle)
-                            .padding(.top, 110)
+                        LiquidGlassClockView(
+                            glassVariant: viewModel.clockGlassStyle,
+                            tint: clockTint(viewModel)
+                        )
+                        .padding(.top, 110)
                         Spacer()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -38,7 +50,7 @@ struct LockScreenPlayerView: View {
 
                 if let snap, snap.hasTrack {
                     VStack(spacing: 20) {
-                        if viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive && animURL == nil {
+                        if showLarge && animURL == nil {
                             ArtworkLayer(
                                 artworkImage: viewModel.artworkImage,
                                 animatedURL: animURL,
@@ -60,8 +72,9 @@ struct LockScreenPlayerView: View {
                             artworkImage: viewModel.artworkImage,
                             animatedURL: animURL,
                             animatedArtwork: viewModel.animatedArtwork,
-                            showInlineArtwork: !viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive,
+                            showInlineArtwork: showInline,
                             onArtworkTap: {
+                                guard !liqoria else { return }
                                 withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                                     viewModel.isLargeArtwork = true
                                 }
@@ -69,17 +82,33 @@ struct LockScreenPlayerView: View {
                         )
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, CGFloat(viewModel.padding) + 160)
+                    .padding(.bottom, CGFloat(viewModel.padding) + (liqoria ? 80 : 160))
                     .padding(.horizontal, CGFloat(viewModel.padding))
                 }
             }
         }
         .ignoresSafeArea()
     }
+
+    private func clockTint(_ vm: LockScreenViewModel) -> Color {
+        guard vm.clockUseDynamicColor else { return .clear }
+        guard let accent = vm.palette.accent.usingColorSpace(.sRGB) else {
+            return Color(nsColor: vm.palette.accent)
+        }
+        if vm.clockGlassStyle == .solid {
+            let strength = max(0, min(1, vm.clockSolidColorStrength))
+            let r = accent.redComponent * strength + 1.0 * (1 - strength)
+            let g = accent.greenComponent * strength + 1.0 * (1 - strength)
+            let b = accent.blueComponent * strength + 1.0 * (1 - strength)
+            return Color(.sRGB, red: Double(r), green: Double(g), blue: Double(b), opacity: 1)
+        }
+        return Color(nsColor: accent)
+    }
 }
 
 private struct LiquidGlassClockView: View {
     var glassVariant: GlassTextVariant = .regular
+    var tint: Color = .clear
 
     @State private var now = Date()
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -101,12 +130,14 @@ private struct LiquidGlassClockView: View {
             GlassEffectText(
                 text: dateString,
                 font: NSFont.systemFont(ofSize: 32, weight: .semibold),
-                variant: glassVariant
+                variant: glassVariant,
+                glassTint: tint
             )
             GlassEffectText(
                 text: timeString,
                 font: NSFont.systemFont(ofSize: 150, weight: .bold),
-                variant: glassVariant
+                variant: glassVariant,
+                glassTint: tint
             )
         }
         .onReceive(timer) { now = $0 }

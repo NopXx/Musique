@@ -92,12 +92,26 @@ struct AnimatedArtworkView: NSViewRepresentable {
             cleanupPlayer()
             guard let url else { return }
 
-            let item = AVPlayerItem(url: url)
+            let resolved: URL
+            if url.isFileURL {
+                resolved = url
+            } else if let cached = AnimatedArtworkCache.shared.localURLIfCached(for: url) {
+                resolved = cached
+            } else {
+                resolved = url
+                AnimatedArtworkCache.shared.resolve(remote: url) { [weak self] _ in
+                    // Cache populated for next playback; no live swap to avoid disrupting loop.
+                    _ = self
+                }
+            }
+
+            let item = AVPlayerItem(url: resolved)
             let queue = AVQueuePlayer(playerItem: item)
             queue.isMuted = true
             queue.actionAtItemEnd = .none
             queue.automaticallyWaitsToMinimizeStalling = false
-            let looper = AVPlayerLooper(player: queue, templateItem: item)
+            let template = AVPlayerItem(url: resolved)
+            let looper = AVPlayerLooper(player: queue, templateItem: template)
             coordinator?.queuePlayer = queue
             coordinator?.looper = looper
 

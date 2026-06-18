@@ -21,6 +21,8 @@ enum GlassTextVariant: String, CaseIterable, Identifiable {
     case clear
     case tinted
     case interactive
+    case solid
+    case outline
 
     var id: String { rawValue }
 
@@ -30,6 +32,8 @@ enum GlassTextVariant: String, CaseIterable, Identifiable {
         case .clear: return "Clear"
         case .tinted: return "Tinted"
         case .interactive: return "Interactive"
+        case .solid: return "Solid"
+        case .outline: return "Outline"
         }
     }
 }
@@ -42,16 +46,42 @@ struct GlassEffectText: View {
     var glassTint: Color = .clear
 
     var body: some View {
-        let textShape = TextToShape(
-            value: text,
-            fontName: font.fontName,
-            fontSize: font.pointSize
-        )
+        let renderFont: PlatformFont = {
+            #if canImport(AppKit)
+            if variant == .outline {
+                return NSFont.systemFont(ofSize: font.pointSize, weight: .ultraLight)
+            }
+            #endif
+            return font
+        }()
+        let ctFont = renderFont as CTFont
+        let textShape = TextToShape(value: text, ctFont: ctFont)
+        let swiftFont = Font(ctFont)
 
-        Text(text)
-            .font(.custom(font.fontName, size: font.pointSize))
-            .opacity(0)
-            .glassEffect(resolvedGlass(), in: textShape)
+        switch variant {
+        case .solid:
+            Text(text)
+                .font(swiftFont)
+                .opacity(0)
+                .overlay(
+                    textShape.fill(glassTint == .clear ? fallbackColor : glassTint)
+                )
+        case .outline:
+            Text(text)
+                .font(swiftFont)
+                .opacity(0)
+                .overlay(
+                    textShape.stroke(
+                        glassTint == .clear ? Color.white : glassTint,
+                        lineWidth: max(1, renderFont.pointSize * 0.015)
+                    )
+                )
+        default:
+            Text(text)
+                .font(swiftFont)
+                .opacity(0)
+                .glassEffect(resolvedGlass(), in: textShape)
+        }
     }
 
     private func resolvedGlass() -> Glass {
@@ -61,6 +91,7 @@ struct GlassEffectText: View {
         case .clear:       base = .clear
         case .tinted:      base = .regular.tint(glassTint == .clear ? .white.opacity(0.7) : glassTint)
         case .interactive: base = .regular.interactive()
+        case .solid, .outline: base = .regular
         }
         if variant != .tinted, glassTint != .clear {
             return base.tint(glassTint)
@@ -71,11 +102,9 @@ struct GlassEffectText: View {
 
 struct TextToShape: Shape {
     var value: String
-    var fontName: String
-    var fontSize: CGFloat
-    
+    var ctFont: CTFont
+
     nonisolated func path(in rect: CGRect) -> Path {
-        let ctFont = CTFontCreateWithName(fontName as CFString, fontSize, nil)
         var path = Path()
         drawGlyphs(value, ctFont: ctFont) { (position, glyphPath) in
             let transform = CGAffineTransform(translationX: position.x, y: position.y).scaledBy(x: 1, y: -1)

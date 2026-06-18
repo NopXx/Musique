@@ -32,6 +32,8 @@
               }
             }
           ],
+          "glass" : true,
+          "hidden" : false,
           "image-name" : "music-1005-svgrepo-com.svg",
           "name" : "music-1005-svgrepo-com",
           "opacity" : 1,

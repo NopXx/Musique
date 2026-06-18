@@ -8,6 +8,17 @@ struct ArtworkResult {
     var animationSquareUltraURL: String?
 }
 
+/// One artwork candidate from a search, for the picker UI.
+struct ArtworkChoice: Identifiable, Sendable {
+    let id: String
+    let track: String?
+    let artist: String?
+    let album: String?
+    let thumbURL: String
+    let fullURL: String
+    let hasAnimation: Bool
+}
+
 actor ArtworkService {
     static let shared = ArtworkService()
 
@@ -50,6 +61,44 @@ actor ArtworkService {
         } catch {
             NSLog("[Artwork] api error: \(error.localizedDescription)")
             return ArtworkResult()
+        }
+    }
+
+    /// Free-form search returning every candidate, for the artwork picker UI.
+    func search(term: String) async -> [ArtworkChoice] {
+        let trimmed = term.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return [] }
+
+        var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "term", value: trimmed),
+            URLQueryItem(name: "limit", value: "24"),
+            URLQueryItem(name: "animation", value: "1"),
+        ]
+        guard let url = components.url else { return [] }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let decoded = try JSONDecoder().decode(SearchResponse.self, from: data)
+            return decoded.results.enumerated().compactMap { offset, item in
+                let thumb = item.artworkHi ?? item.artwork
+                let full = item.artworkUltra ?? item.artworkHi ?? item.artwork
+                guard let full, let thumb else { return nil }
+                let hasAnim = (item.animation?.best?.isEmpty == false)
+                    || (item.animation?.bestTall?.isEmpty == false)
+                    || (item.animation?.square?.isEmpty == false)
+                // Two results can share the same artwork URL (different versions
+                // of one album), so prefix with the index to keep ForEach ids
+                // unique — duplicate ids leave blank cells in the grid.
+                return ArtworkChoice(id: "\(offset)|\(full)", track: item.track, artist: item.artist,
+                                     album: item.album, thumbURL: thumb, fullURL: full,
+                                     hasAnimation: hasAnim)
+            }
+        } catch {
+            NSLog("[Artwork] search error: \(error.localizedDescription)")
+            return []
         }
     }
 

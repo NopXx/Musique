@@ -11,6 +11,8 @@ private final class FFTBandProcessor: @unchecked Sendable {
     private static let log2n = vDSP_Length(log2(Float(FFTBandProcessor.fftSize)))
 
     let bandsLock = OSAllocatedUnfairLock<[Float]>(initialState: Array(repeating: 0, count: FFTBandProcessor.bandCount))
+    let magsLock = OSAllocatedUnfairLock<[Float]>(initialState: Array(repeating: 0, count: FFTBandProcessor.fftSize / 2))
+    let sampleRateLock = OSAllocatedUnfairLock<Float>(initialState: 48000)
 
     private let fftSetup: FFTSetup
     private var hann: [Float]
@@ -45,6 +47,7 @@ private final class FFTBandProcessor: @unchecked Sendable {
     }
 
     func setSampleRate(_ rate: Float) {
+        sampleRateLock.withLock { $0 = rate }
         computeBands(sampleRate: rate)
     }
 
@@ -147,6 +150,7 @@ private final class FFTBandProcessor: @unchecked Sendable {
             out[i] = min(1, avg * 28 * boost)
         }
         bandsLock.withLock { $0 = out }
+        magsLock.withLock { $0 = magnitudes }
     }
 }
 
@@ -160,13 +164,21 @@ final class MusicAudioLevelMonitor: ObservableObject {
     private var aggregateDeviceID: AudioObjectID = kAudioObjectUnknown
     private var ioProcID: AudioDeviceIOProcID?
     private var tapASBD: AudioStreamBasicDescription?
-    private var currentPID: pid_t = -1
+    private var currentPIDs: Set<pid_t> = []
     private var watchTimer: Timer?
     private var publishTimer: Timer?
     private var started = false
     private let processor = FFTBandProcessor()
     private let lastIOTick = OSAllocatedUnfairLock<CFAbsoluteTime>(initialState: 0)
     private var defaultOutputListenerInstalled = false
+
+    nonisolated func magnitudesSnapshot() -> (sampleRate: Float, bins: [Float]) {
+        let rate = processor.sampleRateLock.withLock { $0 }
+        let mags = processor.magsLock.withLock { $0 }
+        return (rate, mags)
+    }
+
+    static let fftSize: Int = FFTBandProcessor.fftSize
 
     private var fullyAttached: Bool {
         processTapID != kAudioObjectUnknown
@@ -206,29 +218,30 @@ final class MusicAudioLevelMonitor: ObservableObject {
     }
 
     private func attemptAttach() {
-        let pid = musicPID() ?? -1
-        if pid == currentPID && fullyAttached { return }
+        let pids = Set(targetPIDs())
+        if pids == currentPIDs && fullyAttached { return }
         teardown()
-        currentPID = pid
-        guard pid > 0 else {
-            NSLog("[AudioTap] Music.app not running")
+        currentPIDs = pids
+        guard !pids.isEmpty else {
+            NSLog("[AudioTap] no target players running")
             return
         }
         guard #available(macOS 14.2, *) else {
             NSLog("[AudioTap] requires macOS 14.2+")
             return
         }
-        guard let processObjID = processAudioObjectID(forPID: pid) else {
-            NSLog("[AudioTap] cannot translate pid \(pid) to AudioObjectID")
+        let processObjIDs = pids.compactMap { processAudioObjectID(forPID: $0) }
+        guard !processObjIDs.isEmpty else {
+            NSLog("[AudioTap] cannot translate any pid \(pids) to AudioObjectID")
             return
         }
-        NSLog("[AudioTap] attaching pid=\(pid) processObjID=\(processObjID)")
-        installTap(processObjectID: processObjID)
+        NSLog("[AudioTap] attaching pids=\(pids) processObjIDs=\(processObjIDs)")
+        installTap(processObjectIDs: processObjIDs)
     }
 
     @available(macOS 14.2, *)
-    private func installTap(processObjectID: AudioObjectID) {
-        let desc = CATapDescription(stereoMixdownOfProcesses: [processObjectID])
+    private func installTap(processObjectIDs: [AudioObjectID]) {
+        let desc = CATapDescription(stereoMixdownOfProcesses: processObjectIDs)
         desc.uuid = UUID()
         desc.isPrivate = true
 
@@ -367,10 +380,15 @@ final class MusicAudioLevelMonitor: ObservableObject {
         return objID
     }
 
-    private func musicPID() -> pid_t? {
-        NSWorkspace.shared.runningApplications
-            .first { $0.bundleIdentifier == "com.apple.Music" }?
-            .processIdentifier
+    private func targetPIDs() -> [pid_t] {
+        let settings = SettingsStore.shared
+        var bundleIDs: [String] = []
+        if settings.bool(["sources", "apple_music_enabled"]) { bundleIDs.append("com.apple.Music") }
+        if settings.bool(["sources", "spotify_enabled"]) { bundleIDs.append("com.spotify.client") }
+        let running = NSWorkspace.shared.runningApplications
+        return bundleIDs.compactMap { id in
+            running.first { $0.bundleIdentifier == id }?.processIdentifier
+        }
     }
 
     private func defaultOutputDeviceUID() -> String? {
@@ -415,7 +433,7 @@ final class MusicAudioLevelMonitor: ObservableObject {
                 guard let self else { return }
                 NSLog("[AudioTap] default output device changed — reattaching")
                 self.teardown()
-                self.currentPID = -1
+                self.currentPIDs = []
                 self.attemptAttach()
             }
         }
@@ -433,7 +451,7 @@ final class MusicAudioLevelMonitor: ObservableObject {
         if last > 0 && (now - last) > 3.0 {
             NSLog("[AudioTap] IOProc silent for \(now - last)s — reattaching")
             teardown()
-            currentPID = -1
+            currentPIDs = []
         }
     }
 }

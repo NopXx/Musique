@@ -121,10 +121,14 @@ final class WebhookDispatcher: ObservableObject {
     private func fire(event: String, rawSnap: NowPlayingSnapshot, editedSnap: NowPlayingSnapshot?) {
         let urls = urls()
         guard !urls.isEmpty else { return }
+        // A custom artwork chosen from the API carries a public URL; prefer it
+        // over the looked-up cover. Local-file picks have no URL → nil.
+        let customArtURL = CustomArtworkStore.shared.sourceURL(for: rawSnap)
         Task {
             let result = await ArtworkService.shared.lookup(
                 title: rawSnap.title, artist: rawSnap.artist, album: rawSnap.album)
-            let payload = buildPayload(event: event, rawSnap: rawSnap, editedSnap: editedSnap, artwork: result)
+            let payload = buildPayload(event: event, rawSnap: rawSnap, editedSnap: editedSnap,
+                                       artwork: result, customArtURL: customArtURL)
             guard let body = try? JSONSerialization.data(withJSONObject: payload, options: []) else { return }
             for str in urls {
                 guard let url = URL(string: str) else { continue }
@@ -145,10 +149,18 @@ final class WebhookDispatcher: ObservableObject {
         }
     }
 
-    private func buildPayload(event: String, rawSnap: NowPlayingSnapshot, editedSnap: NowPlayingSnapshot?, artwork: ArtworkResult) -> [String: Any] {
+    private func buildPayload(event: String, rawSnap: NowPlayingSnapshot, editedSnap: NowPlayingSnapshot?, artwork: ArtworkResult, customArtURL: String? = nil) -> [String: Any] {
         let isPlaying = (event != "paused")
         let duration = Int(rawSnap.duration)
         let position = Int(rawSnap.position)
+        // Custom cover from the API overrides the looked-up one. It's a still
+        // image, so drop the animation URLs to avoid pairing it with a different
+        // track's motion artwork.
+        let hasCustom = (customArtURL?.isEmpty == false)
+        let trackArtUrl = hasCustom ? customArtURL!
+            : (artwork.artworkUltraURL ?? artwork.artworkURL ?? "")
+        let animationUrl = hasCustom ? "" : (artwork.animationURL ?? "")
+        let masterTallUrl = hasCustom ? "" : (artwork.animationTallURL ?? "")
         let song: [String: Any] = [
             "processed": [
                 "artist": editedSnap?.artist ?? rawSnap.artist,
@@ -166,16 +178,16 @@ final class WebhookDispatcher: ObservableObject {
             "flags": ["isValid": true],
             "metadata": [
                 "label": "Musique",
-                "trackArtUrl": artwork.artworkUltraURL ?? artwork.artworkURL ?? "",
-                "animationUrl": artwork.animationURL ?? "",
-                "masterTallUrl": artwork.animationTallURL ?? "",
+                "trackArtUrl": trackArtUrl,
+                "animationUrl": animationUrl,
+                "masterTallUrl": masterTallUrl,
                 "trackUrl": "",
                 "albumUrl": "",
                 "artistUrl": "",
                 "primaryMediaUrl": "",
                 "primaryMediaType": "",
             ],
-            "connector": ["label": "Apple Music"],
+            "connector": ["label": rawSnap.source.displayName],
         ]
         return [
             "eventName": event,

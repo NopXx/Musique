@@ -27,10 +27,16 @@ struct ArtworkLockScreenView: View {
                 BlurredArtworkBackground(palette: viewModel.palette, artworkImage: viewModel.artworkImage, blur: viewModel.backgroundBlur)
             }
         }
-        .opacity(viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive ? 1 : 0)
+        .opacity(shouldShow ? 1 : 0)
         .animation(.easeInOut(duration: 0.4), value: viewModel.isLargeArtwork)
         .animation(.easeInOut(duration: 0.4), value: viewModel.fullscreenAnimationActive)
+        .animation(.easeInOut(duration: 0.4), value: viewModel.liqoriaStyle)
         .ignoresSafeArea()
+    }
+
+    private var shouldShow: Bool {
+        if viewModel.liqoriaStyle { return !viewModel.fullscreenAnimationActive }
+        return viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
     }
 }
 

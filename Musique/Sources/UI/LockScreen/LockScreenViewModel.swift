@@ -14,10 +14,13 @@ final class LockScreenViewModel: ObservableObject {
     @Published var showAlbum: Bool = true
     @Published var showProgress: Bool = true
     @Published var animatedArtwork: Bool = true
+    @Published var liqoriaStyle: Bool = false
     @Published var backgroundBlur: Int = 60
     @Published var backgroundStyle: LockScreenBackgroundStyle = .blurredArtwork
     @Published var padding: Int = 32
     @Published var clockGlassStyle: GlassTextVariant = .regular
+    @Published var clockUseDynamicColor: Bool = false
+    @Published var clockSolidColorStrength: Double = 0.6
 
     private weak var monitor: PlayerMonitor?
     private var cancellables = Set<AnyCancellable>()
@@ -50,6 +53,7 @@ final class LockScreenViewModel: ObservableObject {
         showAlbum = s.bool(["lockscreen", "show_album"])
         showProgress = s.bool(["lockscreen", "show_progress"])
         animatedArtwork = s.bool(["lockscreen", "animated_artwork"])
+        liqoriaStyle = s.bool(["lockscreen", "liqoria_style"])
         let blur = s.int(["lockscreen", "background_blur"])
         backgroundBlur = blur > 0 ? blur : 60
         backgroundStyle = .blurredArtwork
@@ -57,6 +61,9 @@ final class LockScreenViewModel: ObservableObject {
         padding = pad > 0 ? pad : 32
         let style = s.string(["lockscreen", "clock_glass_style"])
         clockGlassStyle = GlassTextVariant(rawValue: style) ?? .regular
+        clockUseDynamicColor = s.bool(["lockscreen", "clock_use_dynamic_color"])
+        let op = s.int(["lockscreen", "clock_solid_color_strength"])
+        clockSolidColorStrength = op > 0 ? Double(op) / 100.0 : 0.6
     }
 
     private func handleTrackUpdate(_ snap: NowPlayingSnapshot?) {

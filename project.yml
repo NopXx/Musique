@@ -10,8 +10,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: '5.9'
-    MARKETING_VERSION: 1.0.0
-    CURRENT_PROJECT_VERSION: '2'
+    MARKETING_VERSION: 1.1.0
+    CURRENT_PROJECT_VERSION: '3'
     DEVELOPMENT_TEAM: H4M5HWBU2K
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: true
@@ -33,7 +33,7 @@ targets:
         LSUIElement: true
         CFBundleDisplayName: Musique
         CFBundleIconName: AppIcon
-        NSAppleEventsUsageDescription: Musique needs permission to control Music to read playback state and send play/pause commands.
+        NSAppleEventsUsageDescription: Musique needs permission to control Apple Music and Spotify to read playback state and send play/pause commands.
         NSAppleMusicUsageDescription: Musique reads the currently playing track info from Apple Music.
         NSAudioCaptureUsageDescription: Musique captures audio from Music.app to render the waveform visualizer.
         NSUserNotificationAlertStyle: alert

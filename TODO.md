@@ -93,11 +93,6 @@
 - [x] Thai + English สำหรับ SettingsView ทั้งหมด (~70 strings)
 - [x] Language picker ใน Settings → General
 
-### Migration
-- [x] First-launch import: settings.json จาก Python install
-- [x] Import `history.db`
-- [x] Import `edit_history.json`
-
 ---
 
 ## 🚧 ยังไม่ทำ
@@ -146,8 +141,7 @@
 | Lock Screen overlay | SkyLight window โผล่เหนือ loginwindow |
 | Control Center | App เราโผล่ใน Now Playing tile |
 | Widget | Refresh ภายใน 2s เมื่อเปลี่ยนเพลง |
-| Webhooks | Payload ตรงกับ Python version |
+| Webhooks | Payload ส่งครบทุก event |
 | Edit history | Rule "A → B" → scrobble โชว์ B |
 | Notifications | Banner ตอนเปลี่ยนเพลง + artwork |
 | Localization | สลับ TH ↔ EN ใน Settings → General ทุก label เปลี่ยน |
-| Migration | Import settings + history สำเร็จ |

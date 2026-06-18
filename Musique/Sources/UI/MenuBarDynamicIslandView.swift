@@ -7,6 +7,11 @@ final class MenuBarDynamicIslandModel: ObservableObject {
     @Published var snapshot: NowPlayingSnapshot?
     @Published var artwork: NSImage?
     @Published var accent: NSColor?
+    /// Rendered frame of the play/pause icon, in window (global) coordinates with a
+    /// top-left origin. Reported by the SwiftUI layout so AppKit hit-testing stays
+    /// correct regardless of menu-bar geometry changes across macOS versions.
+    /// `.zero` when no icon is visible.
+    @Published var iconFrame: CGRect = .zero
 
     private let monitor: PlayerMonitor
     private var cancellables = Set<AnyCancellable>()
@@ -26,6 +31,18 @@ final class MenuBarDynamicIslandModel: ObservableObject {
                 self.refreshArtwork(for: edited)
             }
             .store(in: &cancellables)
+
+        // The user can change a track's custom artwork while it's already
+        // playing; our key (title|artist|album) is unchanged, so force a
+        // re-resolve when that happens.
+        NotificationCenter.default.publisher(for: CustomArtworkStore.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.lastArtworkKey = ""
+                self.refreshArtwork(for: self.snapshot)
+            }
+            .store(in: &cancellables)
     }
 
     private func refreshArtwork(for snap: NowPlayingSnapshot?) {
@@ -42,6 +59,13 @@ final class MenuBarDynamicIslandModel: ObservableObject {
         lastArtworkKey = key
         artworkTask?.cancel()
         paletteTask?.cancel()
+
+        // User-chosen artwork wins over the looked-up cover.
+        if let customURL = CustomArtworkStore.shared.localURL(for: snap) {
+            applyCustomArtwork(customURL, key: key)
+            return
+        }
+
         let title = snap.title
         let artist = snap.artist
         let album = snap.album
@@ -73,6 +97,24 @@ final class MenuBarDynamicIslandModel: ObservableObject {
             }
         }
     }
+
+    private func applyCustomArtwork(_ url: URL, key: String) {
+        let urlString = url.absoluteString
+        artworkTask = Task { [weak self] in
+            if let (data, _) = try? await URLSession.shared.data(from: url),
+               let image = NSImage(data: data) {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    if self?.lastArtworkKey == key { self?.artwork = image }
+                }
+            }
+            let palette = await ColorExtractor.shared.palette(for: urlString)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                if self?.lastArtworkKey == key { self?.accent = palette.accent }
+            }
+        }
+    }
 }
 
 struct MenuBarDynamicIslandView: View {
@@ -90,12 +132,19 @@ struct MenuBarDynamicIslandView: View {
                     Image(systemName: snap.isPlaying ? "play.fill" : "pause.fill")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.primary)
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { newFrame in
+                            model.iconFrame = newFrame
+                        }
+                } else {
+                    Color.clear.frame(width: 0, height: 0)
+                        .onAppear { model.iconFrame = .zero }
                 }
                 WaveBarsView(bands: audio.bands, isPlaying: snap.isPlaying)
             } else {
                 Text("Musique")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.primary)
+                    .onAppear { model.iconFrame = .zero }
             }
         }
         .padding(.horizontal, 12)

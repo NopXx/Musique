@@ -44,9 +44,10 @@ final class ScrobblerService: ObservableObject {
         } else { percent = 0 }
         scrobblePercent = percent
 
-        guard credentialsConfigured() else { return }
+        let lastfmReady = credentialsConfigured()
+        let sourceAllowed = isSourceEnabled(snap)
 
-        if !didSendNowPlaying && snap.isPlaying {
+        if lastfmReady && sourceAllowed && !didSendNowPlaying && snap.isPlaying {
             didSendNowPlaying = true
             Task { await sendNowPlaying(snap) }
         }
@@ -61,13 +62,26 @@ final class ScrobblerService: ObservableObject {
             hasScrobbled = true
             lastScrobbledTrackKey = key
             let startTs = currentTrackStart ?? Date()
-            Task { await sendScrobble(snap, startTs: startTs) }
+            // The scrobble threshold drives history, notifications and webhooks
+            // regardless of Last.fm. Only the Last.fm upload itself is gated.
+            if lastfmReady && sourceAllowed {
+                Task { await sendScrobble(snap, startTs: startTs) }
+            }
         }
     }
 
     private func trackKey(_ snap: NowPlayingSnapshot) -> String {
         if !snap.persistentID.isEmpty { return snap.persistentID }
         return "\(snap.title)|\(snap.artist)|\(snap.album)".lowercased()
+    }
+
+    private func isSourceEnabled(_ snap: NowPlayingSnapshot) -> Bool {
+        switch snap.source {
+        case .appleMusic:
+            return settings.value(["scrobble", "scrobble_apple_music"], Bool.self) ?? true
+        case .spotify:
+            return settings.value(["scrobble", "scrobble_spotify"], Bool.self) ?? true
+        }
     }
 
     private func credentialsConfigured() -> Bool {

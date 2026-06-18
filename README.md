@@ -2,7 +2,7 @@
 
 A native macOS menu bar companion for Apple Music — Last.fm scrobbling, listening history, webhooks, edit-rules, notifications, and a polished mini player.
 
-Written in Swift / SwiftUI. Talks to Music.app via ScriptingBridge. Replaces an older Python/PyObjC implementation with a faster, event-driven, system-integrated build.
+Written in Swift / SwiftUI. Talks to Music.app via ScriptingBridge — event-driven and system-integrated.
 
 ## Features
 
@@ -19,10 +19,9 @@ Written in Swift / SwiftUI. Talks to Music.app via ScriptingBridge. Replaces an 
 - **Webhooks** — POST JSON payloads in Music-Scrobbler format with optional heartbeat
 - **Listening history** — every play / pause / resume / scrobble event is recorded to SQLite; viewable in Settings
 - **Edit rules** — automatically rewrite artist / track / album metadata before scrobbling, configurable inline from the mini player or in Settings
-- **Import / export** — Edit-rule JSON is interchangeable with the legacy apple-music Python edition
+- **Import / export** — Edit-rule JSON can be backed up and restored from Settings
 - **Lock screen overlay** — full-screen now-playing window rendered above the macOS login UI via SkyLight private API (space pinning at NotificationCenterAtScreenLock level)
 - **Localization** — Thai and English; switchable in Settings → General
-- **First-launch migration** — automatically imports settings, history, and edit rules from a sibling `apple-music` Python install
 
 ## Requirements
 
@@ -100,7 +99,7 @@ Musique/
     Notifications/           NotificationService
     Webhooks/                WebhookDispatcher
     Helpers/                 L10n (i18n), TextToShape
-    Settings/                SettingsStore, MigrationService
+    Settings/                SettingsStore
     UI/                      MenuBarController, MenuBarDynamicIslandView,
                              MiniPlayer*, SettingsView, SettingsWindowController,
                              AnimatedArtworkView, AnimationFullscreen*
@@ -129,8 +128,6 @@ Most features described above are implemented and working. Outstanding:
 See [TODO.md](TODO.md) for the live punch list.
 
 ## Acknowledgements
-
-Reference Python implementation that this project is reimagining: a sibling `apple-music` directory in the same workspace.
 
 Artwork lookup uses [`apple-music-artwork-search`](https://apple-music-artwork.nopxx.site/).
 

@@ -13,6 +13,8 @@ final class SettingsViewModel: ObservableObject {
 
     @Published var scrobblePercent: Int
     @Published var scrobbleMinSeconds: Int
+    @Published var scrobbleAppleMusic: Bool
+    @Published var scrobbleSpotify: Bool
 
     @Published var notificationsEnabled: Bool
     @Published var notifOnPlay: Bool
@@ -39,14 +41,24 @@ final class SettingsViewModel: ObservableObject {
     @Published var lockscreenShowAlbum: Bool
     @Published var lockscreenShowProgress: Bool
     @Published var lockscreenAnimatedArtwork: Bool
+    @Published var lockscreenLiqoriaStyle: Bool
     @Published var lockscreenBackgroundBlur: Double
     @Published var lockscreenBackgroundStyle: String
     @Published var lockscreenPadding: Int
     @Published var lockscreenScreens: String
     @Published var lockscreenClockGlassStyle: String
+    @Published var lockscreenClockUseDynamicColor: Bool
+    @Published var lockscreenClockSolidColorStrength: Double
 
     @Published var language: String
     @Published var launchAtLogin: Bool
+
+    @Published var debugServerEnabled: Bool
+    @Published var debugServerPort: Int
+
+    @Published var sourceAppleMusicEnabled: Bool
+    @Published var sourceSpotifyEnabled: Bool
+    @Published var sourcePriority: String
 
     private let store = SettingsStore.shared
     private var pollTask: Task<Void, Never>?
@@ -61,6 +73,8 @@ final class SettingsViewModel: ObservableObject {
 
         self.scrobblePercent = store.int(["scrobble", "percent"])
         self.scrobbleMinSeconds = store.int(["scrobble", "min_seconds"])
+        self.scrobbleAppleMusic = store.value(["scrobble", "scrobble_apple_music"], Bool.self) ?? true
+        self.scrobbleSpotify = store.value(["scrobble", "scrobble_spotify"], Bool.self) ?? true
 
         self.notificationsEnabled = store.bool(["notifications", "enabled"])
         self.notifOnPlay = store.bool(["notifications", "on_play"])
@@ -92,6 +106,7 @@ final class SettingsViewModel: ObservableObject {
         self.lockscreenShowAlbum = store.bool(["lockscreen", "show_album"])
         self.lockscreenShowProgress = store.bool(["lockscreen", "show_progress"])
         self.lockscreenAnimatedArtwork = store.bool(["lockscreen", "animated_artwork"])
+        self.lockscreenLiqoriaStyle = store.bool(["lockscreen", "liqoria_style"])
         let blur = store.int(["lockscreen", "background_blur"])
         self.lockscreenBackgroundBlur = Double(blur > 0 ? blur : 60)
         let bgStyle = store.string(["lockscreen", "background_style"])
@@ -102,6 +117,9 @@ final class SettingsViewModel: ObservableObject {
         self.lockscreenScreens = scr.isEmpty ? "main" : scr
         let clockStyle = store.string(["lockscreen", "clock_glass_style"])
         self.lockscreenClockGlassStyle = clockStyle.isEmpty ? "regular" : clockStyle
+        self.lockscreenClockUseDynamicColor = store.bool(["lockscreen", "clock_use_dynamic_color"])
+        let op = store.int(["lockscreen", "clock_solid_color_strength"])
+        self.lockscreenClockSolidColorStrength = op > 0 ? Double(op) : 60
 
         let lang = store.string(["language"])
         self.language = lang.isEmpty ? "th" : lang
@@ -111,6 +129,15 @@ final class SettingsViewModel: ObservableObject {
         if store.bool(["general", "launch_at_login"]) != systemLaunchAtLogin {
             store.merge(["general": ["launch_at_login": systemLaunchAtLogin]])
         }
+
+        self.debugServerEnabled = store.bool(["debug", "server_enabled"])
+        let dport = store.int(["debug", "server_port"])
+        self.debugServerPort = dport > 0 ? dport : 8765
+
+        self.sourceAppleMusicEnabled = store.bool(["sources", "apple_music_enabled"])
+        self.sourceSpotifyEnabled = store.bool(["sources", "spotify_enabled"])
+        let prio = store.string(["sources", "priority"])
+        self.sourcePriority = prio.isEmpty ? "apple_music" : prio
     }
 
     var hasSession: Bool {
@@ -214,7 +241,18 @@ final class SettingsViewModel: ObservableObject {
         store.merge(["scrobble": [
             "percent": scrobblePercent,
             "min_seconds": scrobbleMinSeconds,
+            "scrobble_apple_music": scrobbleAppleMusic,
+            "scrobble_spotify": scrobbleSpotify,
         ]])
+    }
+
+    func saveSources() {
+        store.merge(["sources": [
+            "apple_music_enabled": sourceAppleMusicEnabled,
+            "spotify_enabled": sourceSpotifyEnabled,
+            "priority": sourcePriority,
+        ]])
+        Task { @MainActor in AppDelegate.shared?.playerMonitor.refresh() }
     }
 
     func saveNotifications() {
@@ -289,16 +327,36 @@ final class SettingsViewModel: ObservableObject {
             "show_album": lockscreenShowAlbum,
             "show_progress": lockscreenShowProgress,
             "animated_artwork": lockscreenAnimatedArtwork,
+            "liqoria_style": lockscreenLiqoriaStyle,
             "background_blur": Int(lockscreenBackgroundBlur),
             "background_style": lockscreenBackgroundStyle,
             "padding": lockscreenPadding,
             "screens": lockscreenScreens,
             "clock_glass_style": lockscreenClockGlassStyle,
+            "clock_use_dynamic_color": lockscreenClockUseDynamicColor,
+            "clock_solid_color_strength": Int(lockscreenClockSolidColorStrength),
         ]])
     }
 
     func saveLanguage() {
         store.merge(["language": language])
+    }
+
+    func saveDebugServer() {
+        let port = max(1024, min(65535, debugServerPort))
+        debugServerPort = port
+        store.merge(["debug": ["server_enabled": debugServerEnabled, "server_port": port]])
+        DebugServer.shared.stop()
+        if debugServerEnabled {
+            DebugServer.shared.start(port: UInt16(port))
+        }
+    }
+
+    func openDebugServer() {
+        let port = debugServerPort > 0 ? debugServerPort : 8765
+        if let url = URL(string: "http://127.0.0.1:\(port)/") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     func saveLaunchAtLogin() {
@@ -313,13 +371,14 @@ final class SettingsViewModel: ObservableObject {
 // MARK: - Settings tab enum
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, lastfm, scrobble, notifications, webhooks, menubar, miniplayer, lockscreen, editRules, history
+    case general, sources, lastfm, scrobble, notifications, webhooks, menubar, miniplayer, lockscreen, editRules, history, debug
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .general: return L10n.tr("ทั่วไป", "General")
+        case .sources: return L10n.tr("แหล่งเพลง", "Music Sources")
         case .lastfm: return "Last.fm"
         case .scrobble: return "Scrobble"
         case .notifications: return L10n.tabNotifications
@@ -329,12 +388,14 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .lockscreen: return "Lock Screen"
         case .editRules: return "Edit Rules"
         case .history: return L10n.tabHistory
+        case .debug: return "Debug"
         }
     }
 
     var icon: String {
         switch self {
         case .general: return "gearshape"
+        case .sources: return "music.note.house"
         case .lastfm: return "music.note.list"
         case .scrobble: return "checkmark.seal"
         case .notifications: return "bell"
@@ -344,12 +405,14 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .lockscreen: return "lock.display"
         case .editRules: return "pencil.and.list.clipboard"
         case .history: return "clock.arrow.circlepath"
+        case .debug: return "ladybug"
         }
     }
 
     var tint: Color {
         switch self {
         case .general:       return Color(red: 0.45, green: 0.48, blue: 0.55)
+        case .sources:       return Color(red: 0.11, green: 0.73, blue: 0.33)
         case .lastfm:        return Color(red: 0.85, green: 0.18, blue: 0.18)
         case .scrobble:      return .orange
         case .notifications: return .red
@@ -359,6 +422,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .lockscreen:    return .indigo
         case .editRules:     return .teal
         case .history:       return Color(red: 0.55, green: 0.40, blue: 0.30)
+        case .debug:         return Color(red: 0.30, green: 0.55, blue: 0.45)
         }
     }
 }
@@ -386,6 +450,7 @@ struct SettingsView: View {
             Group {
                 switch selection {
                 case .general:       GeneralTab(vm: vm)
+                case .sources:       SourcesTab(vm: vm)
                 case .lastfm:        LastfmTab(vm: vm)
                 case .scrobble:      ScrobbleTab(vm: vm)
                 case .notifications: NotificationsTab(vm: vm)
@@ -395,6 +460,7 @@ struct SettingsView: View {
                 case .lockscreen:    LockscreenTab(vm: vm)
                 case .editRules:     EditRulesTab()
                 case .history:       HistoryTab()
+                case .debug:         DebugTab(vm: vm)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -459,6 +525,104 @@ private struct GeneralTab: View {
     }
 }
 
+// MARK: - Music Sources
+
+private struct SourcesTab: View {
+    @ObservedObject var vm: SettingsViewModel
+
+    var body: some View {
+        SettingsPage {
+            SettingsCard(
+                icon: "music.note.house",
+                iconTint: SettingsTab.sources.tint,
+                title: LocalizedStringKey(L10n.tr("แหล่งเพลง", "Music Sources")),
+                subtitle: LocalizedStringKey(L10n.tr("เลือกแอพเล่นเพลงที่ Musique จะติดตาม", "Choose which players Musique follows"))
+            ) {
+                SettingsToggleRow(label: "Apple Music", isOn: $vm.sourceAppleMusicEnabled)
+                    .onChange(of: vm.sourceAppleMusicEnabled) { _, _ in vm.saveSources() }
+
+                SettingsToggleRow(label: "Spotify", isOn: $vm.sourceSpotifyEnabled)
+                    .onChange(of: vm.sourceSpotifyEnabled) { _, _ in vm.saveSources() }
+
+                Divider().opacity(0.4)
+
+                CardRow(label: LocalizedStringKey(L10n.tr("ลำดับความสำคัญ", "Priority when both play"))) {
+                    Picker("", selection: $vm.sourcePriority) {
+                        Text("Apple Music").tag("apple_music")
+                        Text("Spotify").tag("spotify")
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .onChange(of: vm.sourcePriority) { _, _ in vm.saveSources() }
+                }
+
+                CardFooter(text: LocalizedStringKey(L10n.tr(
+                    "ครั้งแรกที่ควบคุม Spotify macOS จะถามสิทธิ์ Automation — อนุญาตที่ System Settings › Privacy & Security › Automation",
+                    "The first time Musique controls Spotify, macOS asks for Automation permission — allow it in System Settings › Privacy & Security › Automation.")))
+            }
+        }
+    }
+}
+
+// MARK: - Debug
+
+private struct DebugTab: View {
+    @ObservedObject var vm: SettingsViewModel
+
+    private var serverURL: String { "http://127.0.0.1:\(vm.debugServerPort)/" }
+
+    var body: some View {
+        SettingsPage {
+            SettingsCard(
+                icon: "ladybug",
+                iconTint: SettingsTab.debug.tint,
+                title: "Debug Server",
+                subtitle: "Local HTTP endpoint for inspecting player snapshot, raw track data, audio bands, settings, and pending scrobbles."
+            ) {
+                CardRow(label: "Enable server") {
+                    Toggle("", isOn: $vm.debugServerEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .onChange(of: vm.debugServerEnabled) { _, _ in vm.saveDebugServer() }
+                }
+
+                CardRow(label: "Port") {
+                    TextField("", value: $vm.debugServerPort, format: .number.grouping(.never))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 100)
+                        .onSubmit { vm.saveDebugServer() }
+                }
+
+                CardRow(label: "URL") {
+                    HStack(spacing: 8) {
+                        Text(serverURL)
+                            .font(.callout.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        Button("Open") { vm.openDebugServer() }
+                            .disabled(!vm.debugServerEnabled)
+                    }
+                }
+            }
+
+            SettingsCard(
+                icon: "list.bullet.rectangle",
+                iconTint: .gray,
+                title: "Endpoints"
+            ) {
+                CardRow(label: "/") { Text("HTML dashboard (auto-refresh)").foregroundStyle(.secondary).font(.callout) }
+                CardRow(label: "/api/all") { Text("snapshot + raw + audio + settings").foregroundStyle(.secondary).font(.callout) }
+                CardRow(label: "/api/snapshot") { Text("PlayerMonitor snapshot").foregroundStyle(.secondary).font(.callout) }
+                CardRow(label: "/api/raw") { Text("Raw Music.app track fields").foregroundStyle(.secondary).font(.callout) }
+                CardRow(label: "/api/audio") { Text("FFT band levels").foregroundStyle(.secondary).font(.callout) }
+                CardRow(label: "/api/pending") { Text("Pending scrobble queue").foregroundStyle(.secondary).font(.callout) }
+                CardRow(label: "/api/settings") { Text("Settings (api_secret stripped)").foregroundStyle(.secondary).font(.callout) }
+            }
+        }
+    }
+}
+
 // MARK: - Last.fm
 
 private struct LastfmTab: View {
@@ -499,6 +663,25 @@ private struct LastfmTab: View {
                     Text(vm.statusMessage)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            if vm.hasSession {
+                SettingsCard(
+                    icon: "dot.radiowaves.left.and.right",
+                    iconTint: SettingsTab.lastfm.tint,
+                    title: LocalizedStringKey(L10n.scrobbleSources),
+                    subtitle: nil
+                ) {
+                    SettingsToggleRow(label: LocalizedStringKey(L10n.scrobbleAppleMusic),
+                                      isOn: $vm.scrobbleAppleMusic)
+                        .onChange(of: vm.scrobbleAppleMusic) { _, _ in vm.saveScrobbleRules() }
+
+                    Divider().opacity(0.4)
+
+                    SettingsToggleRow(label: LocalizedStringKey(L10n.scrobbleSpotify),
+                                      isOn: $vm.scrobbleSpotify)
+                        .onChange(of: vm.scrobbleSpotify) { _, _ in vm.saveScrobbleRules() }
                 }
             }
 
@@ -897,6 +1080,10 @@ private struct LockscreenTab: View {
                     SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenAnimArtwork),
                                       isOn: $vm.lockscreenAnimatedArtwork)
                         .onChange(of: vm.lockscreenAnimatedArtwork) { _, _ in vm.saveLockscreen() }
+
+                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenLiqoriaStyle),
+                                      isOn: $vm.lockscreenLiqoriaStyle)
+                        .onChange(of: vm.lockscreenLiqoriaStyle) { _, _ in vm.saveLockscreen() }
                 }
 
                 SettingsCard(
@@ -945,6 +1132,25 @@ private struct LockscreenTab: View {
                         .labelsHidden()
                         .fixedSize()
                         .onChange(of: vm.lockscreenClockGlassStyle) { _, _ in vm.saveLockscreen() }
+                    }
+
+                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenClockDynamicColor),
+                                      isOn: $vm.lockscreenClockUseDynamicColor)
+                        .onChange(of: vm.lockscreenClockUseDynamicColor) { _, _ in vm.saveLockscreen() }
+
+                    if vm.lockscreenClockGlassStyle == "solid" && vm.lockscreenClockUseDynamicColor {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(L10n.lockscreenClockSolidColorStrength).font(.subheadline)
+                                Spacer()
+                                Text("\(Int(vm.lockscreenClockSolidColorStrength))%")
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                                    .font(.caption)
+                            }
+                            Slider(value: $vm.lockscreenClockSolidColorStrength, in: 10...100, step: 5)
+                                .onChange(of: vm.lockscreenClockSolidColorStrength) { _, _ in vm.saveLockscreen() }
+                        }
                     }
                 }
             }

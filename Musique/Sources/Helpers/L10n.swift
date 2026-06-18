@@ -40,6 +40,9 @@ enum L10n {
     static var scrobbleMinLength: String { tr("เพลงต้องยาวอย่างน้อย", "Minimum track length") }
     static var scrobbleSeconds: String { tr("วินาที", "seconds") }
     static var scrobbleFooter: String { tr("ค่ามาตรฐานของ Last.fm: 50% หรือ 4 นาที (อย่างใดอย่างหนึ่งถึงก่อน) และเพลงต้องยาวอย่างน้อย 30 วินาที", "Last.fm standard: 50% or 4 minutes (whichever comes first) and track must be at least 30 seconds") }
+    static var scrobbleSources: String { tr("Scrobble ไป Last.fm จากแหล่ง", "Scrobble to Last.fm from sources") }
+    static var scrobbleAppleMusic: String { tr("Apple Music", "Apple Music") }
+    static var scrobbleSpotify: String { tr("Spotify", "Spotify") }
 
     // MARK: - Notifications
 
@@ -111,12 +114,15 @@ enum L10n {
     static var lockscreenShowAlbum: String { tr("แสดงชื่ออัลบั้ม", "Show album name") }
     static var lockscreenShowProgress: String { tr("แสดงแถบความคืบหน้า", "Show progress bar") }
     static var lockscreenAnimArtwork: String { tr("ใช้ animated artwork (ถ้ามี)", "Use animated artwork (if available)") }
+    static var lockscreenLiqoriaStyle: String { tr("Liqoria style (animated bg เต็มจอ + capsule)", "Liqoria style (full-screen animated bg + capsule)") }
     static var lockscreenAppearance: String { tr("รูปลักษณ์", "Appearance") }
     static var lockscreenBgBlur: String { tr("ความเบลอพื้นหลัง", "Background blur") }
     static var lockscreenScreenPicker: String { tr("จอที่แสดง", "Display on") }
     static var lockscreenMainOnly: String { tr("จอหลักเท่านั้น", "Main display only") }
     static var lockscreenAllScreens: String { tr("ทุกจอ", "All displays") }
     static var lockscreenClockStyle: String { tr("สไตล์นาฬิกา (Glass)", "Clock style (Glass)") }
+    static var lockscreenClockDynamicColor: String { tr("ใช้สีตามปกหน้าปก", "Use dynamic color from artwork") }
+    static var lockscreenClockSolidColorStrength: String { tr("ความเข้มสี Solid", "Solid color strength") }
 
     // MARK: - Edit Rules
 

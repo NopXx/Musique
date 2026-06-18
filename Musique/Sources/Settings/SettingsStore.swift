@@ -23,6 +23,11 @@ final class SettingsStore: ObservableObject {
             "general": [
                 "launch_at_login": false,
             ],
+            "sources": [
+                "apple_music_enabled": true,
+                "spotify_enabled": true,
+                "priority": "apple_music",
+            ],
             "lastfm": [
                 "api_key": "",
                 "api_secret": "",
@@ -34,6 +39,8 @@ final class SettingsStore: ObservableObject {
             "scrobble": [
                 "percent": 50,
                 "min_seconds": 30,
+                "scrobble_apple_music": true,
+                "scrobble_spotify": true,
             ],
             "notifications": [
                 "enabled": false,
@@ -63,6 +70,10 @@ final class SettingsStore: ObservableObject {
             ],
             "widget": [
                 "large_artwork_style": "normal",
+            ],
+            "debug": [
+                "server_enabled": false,
+                "server_port": 8765,
             ],
             "lockscreen": [
                 "enabled": false,
