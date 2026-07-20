@@ -65,6 +65,8 @@
 - [x] Raise loop (burst `orderFrontRegardless` for 3s after lock UI appears)
 - [x] Multi-display support (`screens: main | all`)
 - [x] Glass clock style picker
+- [x] Static artwork → real desktop wallpaper (crossfade) + motion overlay
+- [ ] Motion artwork as REAL video lock wallpaper — spike done, feasible but large RE build. See [docs/video-lock-wallpaper-spike.md](docs/video-lock-wallpaper-spike.md). Needs code signing + private `WallpaperExtensionKit` interface reconstruction + appex target.
 
 ### Notifications
 - [x] `NotificationService` — `UNUserNotificationCenter` wrapper
