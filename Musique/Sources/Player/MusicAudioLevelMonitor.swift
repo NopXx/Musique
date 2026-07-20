@@ -198,7 +198,8 @@ final class MusicAudioLevelMonitor: ObservableObject {
                 self.attemptAttach()
             }
         }
-        publishTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+        // ponytail: 30 Hz publish — EMA below already smooths; 60 Hz just doubled view redraws. Raise back if bars look choppy.
+        publishTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             let raw = self.processor.bandsLock.withLock { $0 }
             Task { @MainActor in

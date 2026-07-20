@@ -77,10 +77,34 @@ struct GlassEffectText: View {
                     )
                 )
         default:
+            // ponytail: glass alone refracts but reads flat — add specular highlight
+            // + rim stroke so glyphs look like raised glass (matches iOS 26 lock screen).
             Text(text)
                 .font(swiftFont)
                 .opacity(0)
                 .glassEffect(resolvedGlass(), in: textShape)
+                .overlay(
+                    textShape
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    .white.opacity(0.45),
+                                    .white.opacity(0.04),
+                                    .white.opacity(0.22),
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .blendMode(.plusLighter)
+                )
+                .overlay(
+                    textShape.stroke(
+                        .white.opacity(0.5),
+                        lineWidth: max(0.5, renderFont.pointSize * 0.006)
+                    )
+                    .blendMode(.plusLighter)
+                )
         }
     }
 
