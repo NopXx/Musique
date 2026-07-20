@@ -31,10 +31,19 @@ struct ArtworkLockScreenView: View {
         .animation(.easeInOut(duration: 0.4), value: viewModel.isLargeArtwork)
         .animation(.easeInOut(duration: 0.4), value: viewModel.fullscreenAnimationActive)
         .animation(.easeInOut(duration: 0.4), value: viewModel.liqoriaStyle)
+        .animation(.easeInOut(duration: 0.4), value: viewModel.setSystemWallpaper)
         .ignoresSafeArea()
     }
 
     private var shouldShow: Bool {
+        // In system-wallpaper mode the real desktop *is* the artwork — don't
+        // cover it with our own background (the crossfade overlay handles the
+        // transition instead).
+        if viewModel.setSystemWallpaper { return false }
+        // Large motion artwork is drawn full-screen by the player view itself —
+        // don't double the animation here.
+        if animationURL != nil, !viewModel.liqoriaStyle,
+           viewModel.isLargeArtwork, !viewModel.fullscreenAnimationActive { return false }
         if viewModel.liqoriaStyle { return !viewModel.fullscreenAnimationActive }
         return viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
     }

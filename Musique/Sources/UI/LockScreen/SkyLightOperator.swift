@@ -13,7 +13,7 @@ final class SkyLightOperator {
     static let shared = SkyLightOperator()
 
     /// Absolute levels exported by SkyLight. Larger = on top.
-    enum SpaceLevel: Int32 {
+    enum SpaceLevel: Int32, CaseIterable, Identifiable {
         case `default` = 0
         case setupAssistant = 100
         case securityAgent = 200
@@ -21,6 +21,21 @@ final class SkyLightOperator {
         case notificationCenterAtScreenLock = 400
         case bootProgress = 500
         case voiceOver = 600
+
+        var id: Int32 { rawValue }
+
+        /// Short human label describing what the overlay sits above at this level.
+        var displayName: String {
+            switch self {
+            case .default:                      return "Default (0)"
+            case .setupAssistant:               return "Above Setup Assistant (100)"
+            case .securityAgent:                return "Above Security Agent (200)"
+            case .screenLock:                   return "Above Screen Lock (300)"
+            case .notificationCenterAtScreenLock: return "Above Lock Widgets (400)"
+            case .bootProgress:                 return "Above Boot Progress (500)"
+            case .voiceOver:                    return "Above VoiceOver (600)"
+            }
+        }
     }
 
     private let log = Logger(subsystem: "com.nopxx.musique", category: "SkyLight")
@@ -44,7 +59,10 @@ final class SkyLightOperator {
     private let SLSSpaceAddWindowsAndRemoveFromSpaces: FnAddWindowsAndRemove
 
     private let connection: Int32
+    /// Player/clock/controls — fixed above the lock UI so they never vanish.
     private let space: Int32
+    /// Background artwork only — level is user-adjustable for testing.
+    private let bgSpace: Int32
     let isAvailable: Bool
 
     private init() {
@@ -73,6 +91,7 @@ final class SkyLightOperator {
             SLSSpaceAddWindowsAndRemoveFromSpaces = { _, _, _, _ in 0 }
             connection = 0
             space = 0
+            bgSpace = 0
             isAvailable = false
             logger.error("SkyLight unavailable — lock screen promotion disabled")
             return
@@ -87,16 +106,34 @@ final class SkyLightOperator {
         connection = mainConn()
         // (cid, one=1, zero=0) — magic values from WindowServer reverse-engineering
         space = spcCreate(connection, 1, 0)
-        // Pin space above macOS's own NotificationCenterAtScreenLock layer
-        // so we composite over even system-level lock-screen widgets.
+        bgSpace = spcCreate(connection, 1, 0)
+        // Player space is pinned above macOS's NotificationCenterAtScreenLock
+        // layer so the card/controls always composite over system widgets.
         _ = spcSetLevel(connection, space, SpaceLevel.notificationCenterAtScreenLock.rawValue)
-        _ = showSpc(connection, [space] as CFArray)
+        // Background space starts at the user-chosen level (only the bg follows it).
+        let initial = SettingsStore.shared.int(["lockscreen", "sky_level"])
+        let bgLevel = initial > 0 ? Int32(initial) : SpaceLevel.notificationCenterAtScreenLock.rawValue
+        _ = spcSetLevel(connection, bgSpace, bgLevel)
+        _ = showSpc(connection, [space, bgSpace] as CFArray)
         isAvailable = true
         logger.info("SkyLight init OK — connection:\(self.connection) space:\(self.space)")
     }
 
-    /// Attach `window` to the promoted space. Idempotent.
-    func promoteAboveLockScreen(_ window: NSWindow) {
+    /// Re-pin the background space at `level`. Applies live to the attached
+    /// background window without a rebuild; the player space stays fixed.
+    func setBackgroundLevel(_ level: Int32) {
+        guard isAvailable else { return }
+        _ = SLSSpaceSetAbsoluteLevel(connection, bgSpace, level)
+        _ = SLSShowSpaces(connection, [space, bgSpace] as CFArray)
+    }
+
+    /// Attach `window` to the player space (fixed above the lock UI). Idempotent.
+    func promoteAboveLockScreen(_ window: NSWindow) { attach(window, to: space) }
+
+    /// Attach `window` to the background space (user-adjustable level). Idempotent.
+    func promoteBackground(_ window: NSWindow) { attach(window, to: bgSpace) }
+
+    private func attach(_ window: NSWindow, to targetSpace: Int32) {
         guard isAvailable else { return }
         guard window.windowNumber > 0 else {
             log.error("Window has no CGWindowID — call after orderFront")
@@ -106,7 +143,7 @@ final class SkyLightOperator {
         // notification-center plumbing — copied verbatim from SkyLightWindow.
         _ = SLSSpaceAddWindowsAndRemoveFromSpaces(
             connection,
-            space,
+            targetSpace,
             [window.windowNumber] as CFArray,
             7
         )

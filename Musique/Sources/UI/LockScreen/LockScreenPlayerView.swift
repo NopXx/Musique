@@ -19,20 +19,43 @@ struct LockScreenPlayerView: View {
             let liqoria = viewModel.liqoriaStyle
 
             ZStack {
+                // Crossfade layer: the outgoing desktop, shown instantly then
+                // faded to nil to mask the un-animatable real-wallpaper swap.
+                if let cf = viewModel.crossfadeImage {
+                    Image(nsImage: cf)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                        .transition(.asymmetric(insertion: .identity, removal: .opacity))
+                }
+
                 let showLarge = !liqoria && viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
                 let showInline = liqoria || (!viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive)
-                let showClock = liqoria
-                    ? !viewModel.fullscreenAnimationActive
-                    : showLarge
+                // System-wallpaper mode shows the native macOS lock-screen
+                // clock through the transparent overlay — don't draw our own.
+                let showClock = viewModel.setSystemWallpaper
+                    ? false
+                    : (liqoria ? !viewModel.fullscreenAnimationActive : showLarge)
+
+                // Motion artwork: fill the screen with the animation itself (no
+                // blur) instead of setting a still as the wallpaper. Tap-to-shrink
+                // is handled by the Color.clear layer above it.
+                if showLarge, let animURL {
+                    AnimatedArtworkView(url: animURL, staticImage: viewModel.artworkImage,
+                                        contentMode: .fill, cornerRadius: 0)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                }
 
                 if showLarge {
                     Color.clear
                         .contentShape(Rectangle())
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                                viewModel.isLargeArtwork = false
-                            }
-                        }
+                        .onTapGesture { shrink() }
                 }
 
                 if showClock {
@@ -56,11 +79,7 @@ struct LockScreenPlayerView: View {
                                 animatedURL: animURL,
                                 size: largeSize
                             )
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                                    viewModel.isLargeArtwork = false
-                                }
-                            }
+                            .onTapGesture { shrink() }
                             .transition(.scale(scale: 0.92).combined(with: .opacity))
                         }
 
@@ -78,6 +97,10 @@ struct LockScreenPlayerView: View {
                                 withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                                     viewModel.isLargeArtwork = true
                                 }
+                                // Enlarge and turn on the real wallpaper together
+                                // — static artwork only; motion (animURL != nil)
+                                // is handled separately later.
+                                if animURL == nil { viewModel.setWallpaperEnabled(true) }
                             }
                         )
                     }
@@ -85,9 +108,27 @@ struct LockScreenPlayerView: View {
                     .padding(.bottom, CGFloat(viewModel.padding) + (liqoria ? 80 : 160))
                     .padding(.horizontal, CGFloat(viewModel.padding))
                 }
+
+                if viewModel.skyLevelTest {
+                    VStack {
+                        SkyLevelTestControl(viewModel: viewModel)
+                            .padding(.top, 40)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         }
         .ignoresSafeArea()
+    }
+
+    /// Exit large mode and turn the real wallpaper back off — the inverse of the
+    /// thumbnail tap, so enlarge and wallpaper stay coupled.
+    private func shrink() {
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+            viewModel.isLargeArtwork = false
+        }
+        viewModel.setWallpaperEnabled(false)
     }
 
     private func clockTint(_ vm: LockScreenViewModel) -> Color {
@@ -103,6 +144,43 @@ struct LockScreenPlayerView: View {
             return Color(.sRGB, red: Double(r), green: Double(g), blue: Double(b), opacity: 1)
         }
         return Color(nsColor: accent)
+    }
+}
+
+/// On-lock affordance to change the SkyLight layer level live while the screen
+/// is locked — the only place you can actually see the layering take effect.
+/// Gated behind the `sky_level_test` setting.
+private struct SkyLevelTestControl: View {
+    @ObservedObject var viewModel: LockScreenViewModel
+
+    private var levelName: String {
+        SkyLightOperator.SpaceLevel(rawValue: Int32(viewModel.skyLevel))?.displayName
+            ?? "\(viewModel.skyLevel)"
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            button("chevron.left") { viewModel.cycleSkyLevel(forward: false) }
+            VStack(spacing: 1) {
+                Text("Layer").font(.system(size: 9, weight: .semibold)).opacity(0.6)
+                Text(levelName).font(.system(size: 12, weight: .bold)).monospacedDigit()
+            }
+            .frame(minWidth: 150)
+            button("chevron.right") { viewModel.cycleSkyLevel(forward: true) }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Capsule().fill(.black.opacity(0.55)))
+        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
+    }
+
+    private func button(_ symbol: String, _ action: @escaping () -> Void) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 16, weight: .bold))
+            .frame(width: 32, height: 32)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
     }
 }
 
@@ -261,16 +339,22 @@ private struct LockScreenWaveBars: View {
     private let count = 10
     private let bandStride = 1
 
+    private let barW: CGFloat = 2.5
+    private let spacing: CGFloat = 2
+
+    // ponytail: single Canvas instead of 10 Capsules with per-bar implicit animation.
+    // EMA in the publisher already smooths; redraw is one pass, not 10 view diffs.
     var body: some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(0..<count, id: \.self) { i in
-                Capsule()
-                    .fill(Color.white.opacity(0.75))
-                    .frame(width: 2.5, height: barHeight(i))
-                    .animation(.easeOut(duration: 0.06), value: barHeight(i))
+        Canvas { ctx, size in
+            var x: CGFloat = 0
+            for i in 0..<count {
+                let h = barHeight(i)
+                let rect = CGRect(x: x, y: (size.height - h) / 2, width: barW, height: h)
+                ctx.fill(Capsule().path(in: rect), with: .color(.white.opacity(0.75)))
+                x += barW + spacing
             }
         }
-        .frame(height: 18)
+        .frame(width: CGFloat(count) * barW + CGFloat(count - 1) * spacing, height: 18)
         .onAppear { MusicAudioLevelMonitor.shared.start() }
     }
 

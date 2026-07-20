@@ -47,8 +47,11 @@ final class SettingsViewModel: ObservableObject {
     @Published var lockscreenPadding: Int
     @Published var lockscreenScreens: String
     @Published var lockscreenClockGlassStyle: String
+    @Published var lockscreenSetSystemWallpaper: Bool
     @Published var lockscreenClockUseDynamicColor: Bool
     @Published var lockscreenClockSolidColorStrength: Double
+    @Published var lockscreenSkyLevel: Int
+    @Published var lockscreenSkyLevelTest: Bool
 
     @Published var language: String
     @Published var launchAtLogin: Bool
@@ -120,6 +123,10 @@ final class SettingsViewModel: ObservableObject {
         self.lockscreenClockUseDynamicColor = store.bool(["lockscreen", "clock_use_dynamic_color"])
         let op = store.int(["lockscreen", "clock_solid_color_strength"])
         self.lockscreenClockSolidColorStrength = op > 0 ? Double(op) : 60
+        self.lockscreenSetSystemWallpaper = store.bool(["lockscreen", "set_system_wallpaper"])
+        let sky = store.int(["lockscreen", "sky_level"])
+        self.lockscreenSkyLevel = sky > 0 ? sky : 400
+        self.lockscreenSkyLevelTest = store.bool(["lockscreen", "sky_level_test"])
 
         let lang = store.string(["language"])
         self.language = lang.isEmpty ? "th" : lang
@@ -335,6 +342,9 @@ final class SettingsViewModel: ObservableObject {
             "clock_glass_style": lockscreenClockGlassStyle,
             "clock_use_dynamic_color": lockscreenClockUseDynamicColor,
             "clock_solid_color_strength": Int(lockscreenClockSolidColorStrength),
+            "set_system_wallpaper": lockscreenSetSystemWallpaper,
+            "sky_level": lockscreenSkyLevel,
+            "sky_level_test": lockscreenSkyLevelTest,
         ]])
     }
 
@@ -1084,6 +1094,10 @@ private struct LockscreenTab: View {
                     SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenLiqoriaStyle),
                                       isOn: $vm.lockscreenLiqoriaStyle)
                         .onChange(of: vm.lockscreenLiqoriaStyle) { _, _ in vm.saveLockscreen() }
+
+                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenSystemWallpaper),
+                                      isOn: $vm.lockscreenSetSystemWallpaper)
+                        .onChange(of: vm.lockscreenSetSystemWallpaper) { _, _ in vm.saveLockscreen() }
                 }
 
                 SettingsCard(
@@ -1152,6 +1166,39 @@ private struct LockscreenTab: View {
                                 .onChange(of: vm.lockscreenClockSolidColorStrength) { _, _ in vm.saveLockscreen() }
                         }
                     }
+                }
+
+                SettingsCard(
+                    icon: "move.3d",
+                    iconTint: .teal,
+                    title: LocalizedStringKey(L10n.lockscreenPositioning)
+                ) {
+                    CardRow(label: LocalizedStringKey(L10n.lockscreenSkyLevel)) {
+                        Picker("", selection: $vm.lockscreenSkyLevel) {
+                            ForEach(SkyLightOperator.SpaceLevel.allCases) { lvl in
+                                Text(lvl.displayName).tag(Int(lvl.rawValue))
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        .onChange(of: vm.lockscreenSkyLevel) { _, _ in vm.saveLockscreen() }
+                    }
+
+                    Text(L10n.lockscreenSkyLevelHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Divider().opacity(0.4)
+
+                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenSkyLevelTest),
+                                      isOn: $vm.lockscreenSkyLevelTest)
+                        .onChange(of: vm.lockscreenSkyLevelTest) { _, _ in vm.saveLockscreen() }
+
+                    Text(L10n.lockscreenSkyLevelTestHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .disabled(!vm.lockscreenEnabled)

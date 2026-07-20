@@ -21,6 +21,15 @@ final class LockScreenViewModel: ObservableObject {
     @Published var clockGlassStyle: GlassTextVariant = .regular
     @Published var clockUseDynamicColor: Bool = false
     @Published var clockSolidColorStrength: Double = 0.6
+    @Published var setSystemWallpaper: Bool = false
+    @Published var skyLevel: Int = 400
+    @Published var skyLevelTest: Bool = false
+
+    /// The *outgoing* wallpaper image, shown full-screen at opacity 1 to mask an
+    /// instant real-desktop swap, then faded to nil to reveal the new desktop —
+    /// a crossfade over the un-animatable `setDesktopImageURL`. Driven by
+    /// `LockScreenController`.
+    @Published var crossfadeImage: NSImage?
 
     private weak var monitor: PlayerMonitor?
     private var cancellables = Set<AnyCancellable>()
@@ -64,6 +73,28 @@ final class LockScreenViewModel: ObservableObject {
         clockUseDynamicColor = s.bool(["lockscreen", "clock_use_dynamic_color"])
         let op = s.int(["lockscreen", "clock_solid_color_strength"])
         clockSolidColorStrength = op > 0 ? Double(op) / 100.0 : 0.6
+        setSystemWallpaper = s.bool(["lockscreen", "set_system_wallpaper"])
+        let lvl = s.int(["lockscreen", "sky_level"])
+        skyLevel = lvl > 0 ? lvl : 400
+        skyLevelTest = s.bool(["lockscreen", "sky_level_test"])
+    }
+
+    /// Turn the "artwork as real wallpaper" mode on/off from the on-lock card.
+    /// `merge` publishes to `SettingsStore.$data`, which drives both this view
+    /// model's `readSettings` and `LockScreenController`'s live sync.
+    func setWallpaperEnabled(_ on: Bool) {
+        guard setSystemWallpaper != on else { return }
+        SettingsStore.shared.merge(["lockscreen": ["set_system_wallpaper": on]])
+    }
+
+    /// Cycle the SkyLight layer level and persist it. Called from the on-lock
+    /// test control — `merge` publishes to `SettingsStore.$data`, which drives
+    /// both `LockScreenController.applySkyLevel` (live) and `readSettings`.
+    func cycleSkyLevel(forward: Bool) {
+        let levels = SkyLightOperator.SpaceLevel.allCases.map { Int($0.rawValue) }
+        let i = levels.firstIndex(of: skyLevel) ?? levels.firstIndex(of: 400) ?? 0
+        let next = levels[(i + (forward ? 1 : levels.count - 1)) % levels.count]
+        SettingsStore.shared.merge(["lockscreen": ["sky_level": next]])
     }
 
     private func handleTrackUpdate(_ snap: NowPlayingSnapshot?) {

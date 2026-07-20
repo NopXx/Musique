@@ -15,6 +15,10 @@ final class LockScreenController {
     private var cancellables = Set<AnyCancellable>()
     private var isLocked = false
     private var raiseTimer: Timer?
+    private var lastWallpaperKey: String?
+    /// Last-seen `set_system_wallpaper` value, to detect a live toggle from the
+    /// on-lock card and rebuild windows (draw-own-background ⇄ desktop artwork).
+    private var lastWallpaperMode: Bool?
 
     init(playerMonitor: PlayerMonitor) {
         self.playerMonitor = playerMonitor
@@ -47,7 +51,20 @@ final class LockScreenController {
 
         SettingsStore.shared.$data
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.evaluateVisibility() }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.applySkyLevel()
+                let mode = SettingsStore.shared.bool(["lockscreen", "set_system_wallpaper"])
+                let flipped = self.isLocked && mode != self.lastWallpaperMode
+                // On an on/off flip, capture the current desktop as the outgoing
+                // image *before* syncWallpaper swaps it, then crossfade to hide
+                // the instant swap.
+                let outgoing = flipped ? self.currentDesktopImage() : nil
+                self.syncWallpaper()
+                if flipped, let outgoing { self.startCrossfade(from: outgoing) }
+                self.lastWallpaperMode = mode
+                self.evaluateVisibility()
+            }
             .store(in: &cancellables)
 
         playerMonitor.$snapshot
@@ -59,8 +76,29 @@ final class LockScreenController {
                 } else if self.isLocked {
                     self.evaluateVisibility()
                 }
+                self.syncWallpaper()
+                self.prewarmWallpaper()
             }
             .store(in: &cancellables)
+
+        // While locked, keep the desktop wallpaper (which the lock screen
+        // renders) tracking the now-playing artwork as the track changes.
+        // syncWallpaper is a no-op unless locked, so this never touches the
+        // visible desktop. Artwork loads async → react to it landing.
+        viewModel.$artworkImage
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.syncWallpaper()
+                self?.prewarmWallpaper()
+            }
+            .store(in: &cancellables)
+
+        // Restore the user's wallpaper on quit, and recover it if a previous
+        // session died mid-playback.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { _ in MainActor.assumeIsolated { SystemWallpaperOperator.shared.restore() } }
+        SystemWallpaperOperator.shared.recoverIfNeeded()
 
         log.info("LockScreenController initialised")
         Self.shared = self
@@ -74,6 +112,8 @@ final class LockScreenController {
     @objc private func handleScreenLocked() {
         log.info("DistributedNotification: screenIsLocked")
         isLocked = true
+        syncWallpaper()
+        prewarmWallpaper()
         evaluateVisibility()
     }
 
@@ -82,6 +122,66 @@ final class LockScreenController {
         isLocked = false
         stopRaiseLoop()
         dismiss()
+        syncWallpaper()   // isLocked == false → restores the desktop wallpaper
+    }
+
+    /// Set or restore the *desktop* wallpaper to match playback state. The lock
+    /// screen renders the desktop wallpaper, so we only apply the artwork while
+    /// locked — otherwise it would show on the user's visible desktop — and
+    /// restore it the moment the screen unlocks.
+    private func syncWallpaper() {
+        let op = SystemWallpaperOperator.shared
+        guard SettingsStore.shared.bool(["lockscreen", "set_system_wallpaper"]) else {
+            if lastWallpaperKey != nil { op.restore(); lastWallpaperKey = nil }
+            return
+        }
+        guard isLocked else {
+            if lastWallpaperKey != nil { op.restore(); lastWallpaperKey = nil }
+            return
+        }
+        let blur = SettingsStore.shared.int(["lockscreen", "background_blur"])
+        // Key on artwork + blur so the 1 Hz position tick doesn't re-apply
+        // on every snapshot update.
+        if playerMonitor.snapshot?.hasTrack == true, let image = viewModel.artworkImage {
+            let key = "\(viewModel.artwork.artworkURL ?? "")|\(blur)"
+            guard key != lastWallpaperKey else { return }
+            lastWallpaperKey = key
+            op.apply(image: image, blurRadius: Double(blur), key: key)
+        } else if lastWallpaperKey != nil {
+            op.restore()   // nothing playing → restore
+            lastWallpaperKey = nil
+        }
+    }
+
+    /// The current real desktop wallpaper of the main screen as an image, used
+    /// as the outgoing frame of a crossfade.
+    private func currentDesktopImage() -> NSImage? {
+        guard let screen = NSScreen.main,
+              let url = NSWorkspace.shared.desktopImageURL(for: screen) else { return nil }
+        return NSImage(contentsOf: url)
+    }
+
+    /// Show `image` full-screen over the just-swapped desktop, then fade it out —
+    /// masking the un-animatable `setDesktopImageURL` with a crossfade.
+    private func startCrossfade(from image: NSImage) {
+        viewModel.crossfadeImage = image
+        // Let the cover frame render, then fade it away to reveal the new desktop.
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 0.5)) { self.viewModel.crossfadeImage = nil }
+        }
+    }
+
+    /// Pre-render the wallpaper file while locked so the enlarge-tap swap is
+    /// instant. Runs regardless of the toggle — it only writes a file, never
+    /// touches the live desktop.
+    private func prewarmWallpaper() {
+        guard isLocked,
+              SettingsStore.shared.bool(["lockscreen", "set_system_wallpaper"]) == false,
+              playerMonitor.snapshot?.hasTrack == true,
+              let image = viewModel.artworkImage else { return }
+        let blur = SettingsStore.shared.int(["lockscreen", "background_blur"])
+        let key = "\(viewModel.artwork.artworkURL ?? "")|\(blur)"
+        SystemWallpaperOperator.shared.prepare(image: image, blurRadius: Double(blur), key: key)
     }
 
     @objc private func handleLockUIShown() {
@@ -122,8 +222,19 @@ final class LockScreenController {
         }
     }
 
+    /// Push the user-chosen SkyLight space level. Live: re-composites any
+    /// currently-attached overlay window without a rebuild.
+    private func applySkyLevel() {
+        let lvl = SettingsStore.shared.int(["lockscreen", "sky_level"])
+        SkyLightOperator.shared.setBackgroundLevel(lvl > 0 ? Int32(lvl) : 400)
+    }
+
     private func present() {
         let targets = targetScreens()
+        // Always attach the background window; `ArtworkLockScreenView.shouldShow`
+        // keeps it transparent in system-wallpaper mode (real desktop shows
+        // through) and fades it in otherwise. Attaching it unconditionally means
+        // toggling the mode live needs no window rebuild.
         log.info("present — \(targets.count) screen(s)")
         for screen in targets {
             let bgWindow = LockScreenBackgroundWindow(screen: screen)
@@ -131,7 +242,7 @@ final class LockScreenController {
             bgHost.view.frame = NSRect(origin: .zero, size: screen.frame.size)
             bgWindow.contentViewController = bgHost
             bgWindow.setFrame(screen.frame, display: true)
-            SkyLightOperator.shared.promoteAboveLockScreen(bgWindow)
+            SkyLightOperator.shared.promoteBackground(bgWindow)
             bgWindow.makeKeyAndOrderFront(nil)
             backgroundWindows.append(bgWindow)
 
@@ -171,7 +282,7 @@ final class LockScreenController {
     private func raiseAllWindows() {
         for window in backgroundWindows {
             window.orderFrontRegardless()
-            SkyLightOperator.shared.promoteAboveLockScreen(window)
+            SkyLightOperator.shared.promoteBackground(window)
         }
         for window in playerWindows {
             window.orderFrontRegardless()
