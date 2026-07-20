@@ -17,6 +17,8 @@ struct ArtworkChoice: Identifiable, Sendable {
     let thumbURL: String
     let fullURL: String
     let hasAnimation: Bool
+    let animationURL: String?
+    let animationTallURL: String?
 }
 
 actor ArtworkService {
@@ -94,7 +96,9 @@ actor ArtworkService {
                 // unique — duplicate ids leave blank cells in the grid.
                 return ArtworkChoice(id: "\(offset)|\(full)", track: item.track, artist: item.artist,
                                      album: item.album, thumbURL: thumb, fullURL: full,
-                                     hasAnimation: hasAnim)
+                                     hasAnimation: hasAnim,
+                                     animationURL: item.animation?.best,
+                                     animationTallURL: item.animation?.bestTall)
             }
         } catch {
             NSLog("[Artwork] search error: \(error.localizedDescription)")

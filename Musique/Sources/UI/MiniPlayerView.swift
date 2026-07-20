@@ -193,6 +193,10 @@ struct MiniPlayerView: View {
         }
         .frame(width: 272, height: 272)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(alignment: .topTrailing) {
+            motionBadge
+                .padding(10)
+        }
         .shadow(color: .black.opacity(0.55), radius: 20, x: 0, y: 16)
         .onTapGesture { openFullscreenAnimation() }
     }
@@ -437,7 +441,7 @@ struct MiniPlayerView: View {
     @ViewBuilder
     private var immersiveContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack { sourceBadge(); Spacer() }
+            HStack(spacing: 6) { sourceBadge(); motionBadge; Spacer() }
                 .padding(.bottom, 8)
             MarqueeText(text: viewModel.snapshot?.title.nilIfEmpty ?? L10n.miniplayerNoTrack,
                         font: .system(size: 20, weight: .heavy),
@@ -615,8 +619,26 @@ struct MiniPlayerView: View {
         if let snap = viewModel.snapshot, snap.hasTrack {
             HStack(spacing: 4) {
                 Image(systemName: snap.source.sfSymbol)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                 Text(snap.source.displayName)
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(.white.opacity(0.75))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(.white.opacity(0.14)))
+        }
+    }
+
+    /// Small pill shown on the artwork when the current track has a motion
+    /// (animated) artwork available.
+    @ViewBuilder
+    private var motionBadge: some View {
+        if animationsOn && hasAnimation {
+            HStack(spacing: 3) {
+                Image(systemName: "livephoto")
+                    .font(.system(size: 11, weight: .bold))
+                Text(L10n.tr("เคลื่อนไหว", "Motion"))
                     .font(.system(size: 10, weight: .semibold))
             }
             .foregroundStyle(.white.opacity(0.75))
