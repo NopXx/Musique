@@ -58,7 +58,12 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
     - target: MusiqueWidget
+    # ExtensionKit extensions belong in Contents/Extensions, not the Contents/PlugIns
+    # that the default embed phase uses (which Xcode warns about).
     - target: MusiqueWallpaper
+      copy:
+        destination: wrapper
+        subpath: Contents/Extensions
     - sdk: ScriptingBridge.framework
   MusiqueWidget:
     type: app-extension
