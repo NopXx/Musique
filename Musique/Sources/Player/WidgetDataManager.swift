@@ -32,19 +32,31 @@ struct NowPlayingWidgetData: Codable {
 
 // MARK: - Shared file path (used by both main app and widget)
 
-func widgetDataFileURL() -> URL {
+/// Where widget data lives. Normally the app group container; falls back to a
+/// temp dir when that container exists but isn't writable — a test host has no
+/// app-group entitlement, so every write there fails with EPERM and would spam
+/// the log once per track change. Resolved once per process (global `let` is
+/// lazy and thread-safe).
+private let widgetContainerURL: URL = {
     let fm = FileManager.default
-    let containerURL = fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
-    let dir = containerURL ?? fm.temporaryDirectory
-    return dir.appendingPathComponent("nowPlaying.json")
+    if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupID),
+       (try? fm.createDirectory(at: container, withIntermediateDirectories: true)) != nil,
+       fm.isWritableFile(atPath: container.path) {
+        return container
+    }
+    let fallback = fm.temporaryDirectory.appendingPathComponent("musique_widget", isDirectory: true)
+    try? fm.createDirectory(at: fallback, withIntermediateDirectories: true)
+    NSLog("[WidgetDataManager] app group container unavailable — using \(fallback.path)")
+    return fallback
+}()
+
+func widgetDataFileURL() -> URL {
+    widgetContainerURL.appendingPathComponent("nowPlaying.json")
 }
 
 func widgetArtworkDirURL() -> URL {
-    let fm = FileManager.default
-    let containerURL = fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
-    let dir = containerURL?.appendingPathComponent("artwork", isDirectory: true)
-        ?? fm.temporaryDirectory.appendingPathComponent("musique_widget_artwork")
-    try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    let dir = widgetContainerURL.appendingPathComponent("artwork", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     return dir
 }
 
