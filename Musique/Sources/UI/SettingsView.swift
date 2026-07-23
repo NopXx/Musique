@@ -56,6 +56,7 @@ final class SettingsViewModel: ObservableObject {
 
     @Published var language: String
     @Published var launchAtLogin: Bool
+    @Published var showInDock: Bool
 
     @Published var debugServerEnabled: Bool
     @Published var debugServerPort: Int
@@ -138,6 +139,7 @@ final class SettingsViewModel: ObservableObject {
         if store.bool(["general", "launch_at_login"]) != systemLaunchAtLogin {
             store.merge(["general": ["launch_at_login": systemLaunchAtLogin]])
         }
+        self.showInDock = store.bool(["general", "show_in_dock"])
 
         self.debugServerEnabled = store.bool(["debug", "server_enabled"])
         let dport = store.int(["debug", "server_port"])
@@ -379,6 +381,11 @@ final class SettingsViewModel: ObservableObject {
         }
         store.merge(["general": ["launch_at_login": launchAtLogin]])
     }
+
+    func saveShowInDock() {
+        store.merge(["general": ["show_in_dock": showInDock]])
+        AppDelegate.applyDockVisibility()
+    }
 }
 
 // MARK: - Settings tab enum
@@ -507,6 +514,13 @@ private struct GeneralTab: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .onChange(of: vm.launchAtLogin) { _, _ in vm.saveLaunchAtLogin() }
+                }
+
+                CardRow(label: LocalizedStringKey(L10n.tr("แสดงใน Dock", "Show in Dock"))) {
+                    Toggle("", isOn: $vm.showInDock)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .onChange(of: vm.showInDock) { _, _ in vm.saveShowInDock() }
                 }
 
                 CardRow(label: LocalizedStringKey(L10n.languageTitle)) {

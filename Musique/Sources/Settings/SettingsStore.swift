@@ -22,6 +22,7 @@ final class SettingsStore: ObservableObject {
             "language": "en",
             "general": [
                 "launch_at_login": false,
+                "show_in_dock": false,
             ],
             "sources": [
                 "apple_music_enabled": true,
