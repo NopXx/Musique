@@ -78,5 +78,26 @@ final class MusiqueTests: XCTestCase {
         XCTAssertEqual(desktopImage(restoredSpaces["space-1"] as! [String: Any]), "beach.heic")
         // Not in the backup → the system-default desktop, NOT the lock screen.
         XCTAssertEqual(desktopImage(restoredSpaces["space-2"] as! [String: Any]), "default.heic")
+        XCTAssertFalse(MotionWallpaperStore.hasStuckDesktop(in: restored))
+        XCTAssertTrue(MotionWallpaperStore.hasStuckDesktop(in: live))
+    }
+
+    /// A Desktop whose *file path* merely mentions our bundle id is not stuck —
+    /// only its Provider decides. The staged clip lives under a path containing
+    /// the extension's bundle id, so a raw byte scan of the store reported clean
+    /// stores as stuck.
+    func testStuckDetectionIgnoresFilePaths() {
+        let staged = "file:///Users/x/Library/Containers/\(MotionWallpaperStore.extensionBundleID)/Data/Documents/videos/a.mov"
+        let store: [String: Any] = [
+            "Displays": [
+                "d1": [
+                    "Desktop": ["Content": ["Choices": [[
+                        "Provider": "com.apple.wallpaper.choice.image",
+                        "Files": [["relative": staged]],
+                    ]]]],
+                ],
+            ],
+        ]
+        XCTAssertFalse(MotionWallpaperStore.hasStuckDesktop(in: store))
     }
 }

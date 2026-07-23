@@ -148,18 +148,7 @@ enum MotionWallpaperStore {
         guard backupOnce(root) else { return false }
         root = rewriteDesktop(in: root, choiceID: choiceID, videoURL: videoURL)
 
-        guard let out = try? PropertyListSerialization.data(fromPropertyList: root, format: .binary, options: 0) else {
-            storeLog.error("activate: could not serialise rewritten store")
-            return false
-        }
-        do {
-            try out.write(to: storeURL, options: .atomic)
-        } catch {
-            storeLog.error("activate: store write failed — \(error.localizedDescription, privacy: .public)")
-            return false
-        }
-        reloadWallpaperAgent()
-        return true
+        return writeStore(root)
     }
 
     /// Restore the user's wallpaper. Always works from the *live* store — every
@@ -174,7 +163,7 @@ enum MotionWallpaperStore {
         else {
             storeLog.error("deactivate: wallpaper store unreadable — reloading agent only")
             discardBackups()
-            reloadWallpaperAgent()
+            bounceWallpaperAgent()
             return
         }
 
@@ -187,17 +176,8 @@ enum MotionWallpaperStore {
         }
 
         let restored = restoreDesktops(in: root, saved: saved)
-        guard let out = try? PropertyListSerialization.data(fromPropertyList: restored, format: .binary, options: 0) else {
-            storeLog.error("deactivate: could not serialise restored store")
-            reloadWallpaperAgent()
-            return
-        }
-        do {
-            try out.write(to: storeURL, options: .atomic)
-        } catch {
+        guard writeStore(restored) else {
             // Leave the backup in place so the next launch can retry the restore.
-            storeLog.error("deactivate: store write failed — \(error.localizedDescription, privacy: .public)")
-            reloadWallpaperAgent()
             return
         }
 
@@ -205,12 +185,11 @@ enum MotionWallpaperStore {
         // Only drop the backup once nothing references us any more. A node we
         // couldn't restore (no saved content, no usable Idle) would otherwise be
         // stranded with the only record of the user's wallpaper deleted.
-        if out.range(of: Data(extensionBundleID.utf8)) != nil {
+        if hasStuckDesktop(in: restored) {
             storeLog.error("deactivate: some Desktop nodes could not be restored — keeping the backup for the next launch")
         } else {
             discardBackups()
         }
-        reloadWallpaperAgent()
     }
 
     /// Repair a store left pointing at us by a prior session that quit/crashed
@@ -218,7 +197,8 @@ enum MotionWallpaperStore {
     /// Desktop node still references our extension. Call once at launch.
     static func healIfStuck() {
         guard let data = try? Data(contentsOf: storeURL),
-              data.range(of: Data(extensionBundleID.utf8)) != nil
+              let root = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
+              hasStuckDesktop(in: root)
         else {
             // Store is clean, so any backup on disk is a leftover from a session
             // that crashed and whose wallpaper the user has since changed. Keeping
@@ -233,6 +213,18 @@ enum MotionWallpaperStore {
         let fm = FileManager.default
         try? fm.removeItem(at: backupURL)
         try? fm.removeItem(at: legacyBackupURL)
+    }
+
+    /// True if any `Desktop` node anywhere in the store is still served by us.
+    /// Structural rather than a byte scan for our bundle id: that id also appears
+    /// inside the staged file's path, so a raw search reports stuck stores that
+    /// aren't.
+    static func hasStuckDesktop(in node: [String: Any]) -> Bool {
+        if let desktop = node["Desktop"] as? [String: Any], pointsAtUs(desktop) { return true }
+        for (key, value) in node where key != "Desktop" && key != "Idle" {
+            if let child = value as? [String: Any], hasStuckDesktop(in: child) { return true }
+        }
+        return false
     }
 
     /// True if a `Desktop`/`Idle` node's Content is served by our extension.
@@ -359,11 +351,68 @@ enum MotionWallpaperStore {
         return result
     }
 
-    private static func reloadWallpaperAgent() {
+    /// Replace the wallpaper store with `root`.
+    ///
+    /// Order matters: WallpaperAgent owns this file while it runs and persists its
+    /// own in-memory state on the way out, so writing first and killing after lets
+    /// the dying agent overwrite what we just wrote. (Evidence: a `Content` we
+    /// write with no `EncodedOptionValues` comes back with that key present — the
+    /// agent authored it, not us.) Stop the agent, wait for it to actually go, and
+    /// write into the gap; launchd respawns it and it reads our file on startup.
+    private static func writeStore(_ root: [String: Any]) -> Bool {
+        guard let out = try? PropertyListSerialization.data(fromPropertyList: root, format: .binary, options: 0) else {
+            storeLog.error("store write: could not serialise")
+            return false
+        }
+        stopWallpaperAgentAndWait()
+        do {
+            try out.write(to: storeURL, options: .atomic)
+        } catch {
+            storeLog.error("store write failed — \(error.localizedDescription, privacy: .public)")
+            bounceWallpaperAgent()
+            return false
+        }
+        return true
+    }
+
+    /// SIGTERM WallpaperAgent and wait for it to exit. launchd brings it right
+    /// back, so this is a reload rather than a shutdown.
+    /// ponytail: bounded busy-wait on the main thread — the agent normally goes in
+    /// well under 100ms. If the stall ever shows at lock/unlock, move the whole
+    /// activate/deactivate off the main actor rather than shortening the wait.
+    private static func stopWallpaperAgentAndWait() {
+        let pids = wallpaperAgentPIDs()
+        bounceWallpaperAgent()
+        guard !pids.isEmpty else { return }
+        let deadline = Date().addingTimeInterval(1.0)
+        while Date() < deadline, pids.contains(where: { kill($0, 0) == 0 }) {
+            usleep(20_000)
+        }
+        if pids.contains(where: { kill($0, 0) == 0 }) {
+            storeLog.error("agent still alive after 1s — writing anyway, it may overwrite us")
+        }
+    }
+
+    private static func wallpaperAgentPIDs() -> [pid_t] {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        p.arguments = ["-x", "WallpaperAgent"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return [] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+            .split(whereSeparator: \.isNewline)
+            .compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    private static func bounceWallpaperAgent() {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
         p.arguments = ["WallpaperAgent"]
-        try? p.run()
+        guard (try? p.run()) != nil else { return }
         p.waitUntilExit()
     }
 }
