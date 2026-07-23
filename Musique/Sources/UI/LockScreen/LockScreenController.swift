@@ -14,6 +14,11 @@ final class LockScreenController {
     private var playerWindows: [LockScreenWindow] = []
     private var cancellables = Set<AnyCancellable>()
     private var isLocked = false
+    /// The screen saver runs above everything, including the lock UI and our
+    /// SkyLight-pinned windows. Tracked separately from `isLocked` because the
+    /// two are independent: the saver can run unlocked, and locking *through* the
+    /// saver delivers `screenIsLocked` before, during or after it starts.
+    private var isScreensaverActive = false
     private var raiseTimer: Timer?
     private var lastWallpaperKey: String?
     /// Motion (video) desktop wallpaper driver — separate opt-in from the
@@ -46,6 +51,14 @@ final class LockScreenController {
         dnc.addObserver(self,
                         selector: #selector(handleLockUIHidden),
                         name: NSNotification.Name("com.apple.screenLockUIIsHidden"),
+                        object: nil)
+        dnc.addObserver(self,
+                        selector: #selector(handleScreensaverStarted),
+                        name: NSNotification.Name("com.apple.screensaver.didstart"),
+                        object: nil)
+        dnc.addObserver(self,
+                        selector: #selector(handleScreensaverStopped),
+                        name: NSNotification.Name("com.apple.screensaver.didstop"),
                         object: nil)
 
         NotificationCenter.default.addObserver(
@@ -142,9 +155,32 @@ final class LockScreenController {
         evaluateVisibility()
     }
 
+    /// Give the screen up to the saver rather than fighting it: it draws above
+    /// our windows, so raising them just burns the raise loop. The overlay comes
+    /// back when the saver stops, if we're still locked.
+    @objc private func handleScreensaverStarted() {
+        log.info("DistributedNotification: screensaver.didstart")
+        isScreensaverActive = true
+        dismiss()
+    }
+
+    @objc private func handleScreensaverStopped() {
+        log.info("DistributedNotification: screensaver.didstop — locked:\(self.isLocked)")
+        isScreensaverActive = false
+        // Dismissing the saver while locked hands the screen back to the lock UI,
+        // which draws over us on the way in — same situation as a fresh lock.
+        guard isLocked else { return }
+        evaluateVisibility()
+        raiseAllWindows()
+        startRaiseLoop()
+    }
+
     @objc private func handleScreenUnlocked() {
         log.info("DistributedNotification: screenIsUnlocked")
         isLocked = false
+        // Unlocking always tears the saver down, and a missed didstop would
+        // otherwise keep the overlay suppressed for the rest of the session.
+        isScreensaverActive = false
         stopRaiseLoop()
         dismiss()
         viewModel.isLargeArtwork = false   // clear tap state so next lock starts fresh
@@ -234,6 +270,10 @@ final class LockScreenController {
     }
 
     @objc private func handleLockUIShown() {
+        guard !isScreensaverActive else {
+            log.info("DistributedNotification: screenLockUIIsShown — screen saver up, not raising")
+            return
+        }
         log.info("DistributedNotification: screenLockUIIsShown — re-raising window")
         raiseAllWindows()
         startRaiseLoop()
@@ -255,7 +295,7 @@ final class LockScreenController {
     }
 
     private func evaluateVisibility() {
-        guard isLocked else { return }
+        guard isLocked, !isScreensaverActive else { return }
         let s = SettingsStore.shared
         let enabled = s.bool(["lockscreen", "enabled"])
         let hasTrack = playerMonitor.snapshot?.hasTrack == true
