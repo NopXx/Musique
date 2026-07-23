@@ -27,9 +27,14 @@ final class WallpaperXPCHandler: NSObject, WallpaperHostedXPC {
         if let did = mirrorFind("directDisplayID", in: request as Any) as? UInt32 { displayID = did }
 
         let choice = (mirrorFind("configuration", in: request as Any) as? Data).flatMap { String(data: $0, encoding: .utf8) }
+        // The path recorded in the wallpaper store names whichever clip was current
+        // when the host activated, and the host stages a new file per track — so
+        // prefer a file that still exists, and otherwise ask what's current now.
         let files = mirrorFind("files", in: request as Any) as? [URL] ?? []
-        let videoURL = files.first(where: { $0.pathExtension == "mov" || $0.pathExtension == "mp4" })
-            ?? WallpaperPaths.videoURL(forChoice: choice)
+        let fm = FileManager.default
+        let videoURL = files.first(where: {
+            ($0.pathExtension == "mov" || $0.pathExtension == "mp4") && fm.fileExists(atPath: $0.path)
+        }) ?? WallpaperPaths.currentVideoURL()
 
         let surfaceUUID = extractUUID(from: id) ?? deterministicUUID(displayID)
         let key = SurfaceKey(displayID: displayID, surfaceUUID: surfaceUUID)
@@ -86,7 +91,7 @@ final class WallpaperXPCHandler: NSObject, WallpaperHostedXPC {
             surface.renderer = renderer
             surface.videoID = choice
             renderer.start(onFirstFrameReady: onReady)
-            if WallpaperState.shared.presentationMode != "locked" { /* desktop: keep playing */ }
+            if WallpaperState.shared.presentationMode == WallpaperState.suspendedMode { renderer.pause() }
         }
     }
 
@@ -95,6 +100,9 @@ final class WallpaperXPCHandler: NSObject, WallpaperHostedXPC {
         Self.queue.async {
             let mode = (mirrorFind("presentationMode", in: ureq as Any)).map(enumCaseName) ?? "default"
             WallpaperState.shared.presentationMode = mode
+            // Stop decoding while the surface is off screen, resume when it's back.
+            let suspended = (mode == WallpaperState.suspendedMode)
+            WallpaperState.shared.eachRenderer { suspended ? $0.pause() : $0.resume() }
             reply(nil)
         }
     }

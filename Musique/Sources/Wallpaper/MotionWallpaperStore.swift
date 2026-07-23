@@ -16,11 +16,14 @@ private let storeLog = Logger(subsystem: "com.nopxx.musique", category: "MotionW
 enum MotionWallpaperStore {
     static let extensionBundleID = "com.nopxx.musique.wallpaper"
 
-    /// One stable choice/file the wallpaper store points at for the whole session.
-    /// Track changes overwrite this file's bytes rather than minting a new choice,
-    /// so WallpaperAgent keeps hosting the same surface (no reload flash per song).
+    /// One stable choice the wallpaper store points at for the whole session, so
+    /// WallpaperAgent keeps hosting the same surface (no reload flash per song).
+    /// The *file* behind it changes per track — see `stage`.
     static let stableChoiceID = "musique-motion"
-    private static let stableFileName = "musique-motion.mov"
+
+    /// Names the clip that is current. Written after the clip itself, read by the
+    /// extension when it's told to switch. Must match `WallpaperPaths`.
+    private static let pointerFileName = "current"
 
     /// Darwin notification the extension listens for; posted after the staged file
     /// is overwritten so it swaps clips on the live surface. Must match the name in
@@ -46,9 +49,11 @@ enum MotionWallpaperStore {
         return digest.map { String(format: "%02x", $0) }.joined().prefix(32).description
     }
 
-    /// Overwrite the single staged clip with `sourceURL`, atomically so the
-    /// extension's open reader keeps the old inode until it swaps. Returns the
-    /// content id (for dedup) and the fixed staged URL, or nil on failure.
+    /// Stage `sourceURL` as the current clip, under a name of its own, and record
+    /// it in the pointer file. Each track therefore gets a *distinct* URL: the
+    /// previous scheme overwrote one fixed path and relied on AVURLAsset noticing
+    /// the replaced inode, which is not a guarantee AVFoundation makes.
+    /// Returns the content id (for dedup) and the staged URL, or nil on failure.
     @discardableResult
     static func stage(localVideo sourceURL: URL) -> (contentID: String, url: URL)? {
         guard let dir = videosDir else {
@@ -56,23 +61,39 @@ enum MotionWallpaperStore {
             return nil
         }
         let id = contentID(for: sourceURL)
-        let dest = dir.appendingPathComponent(stableFileName)
+        let dest = dir.appendingPathComponent(id).appendingPathExtension("mov")
         let fm = FileManager.default
         do {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            if fm.fileExists(atPath: dest.path) {
-                let tmp = dir.appendingPathComponent(stableFileName + ".tmp")
-                try? fm.removeItem(at: tmp)
-                try fm.copyItem(at: sourceURL, to: tmp)
-                _ = try fm.replaceItemAt(dest, withItemAt: tmp)   // atomic swap
-            } else {
+            if !fm.fileExists(atPath: dest.path) {
                 try fm.copyItem(at: sourceURL, to: dest)
             }
+            // Pointer last, atomically — the extension must never read it half-written.
+            try Data(dest.lastPathComponent.utf8)
+                .write(to: dir.appendingPathComponent(pointerFileName), options: .atomic)
+            pruneStagedVideos(in: dir, keeping: dest)
             return (id, dest)
         } catch {
             storeLog.error("stage: \(error.localizedDescription, privacy: .public) src=\(sourceURL.path, privacy: .public) dest=\(dest.path, privacy: .public)")
             return nil
         }
+    }
+
+    /// Drop clips staged for previous tracks. Unlinking one the extension still
+    /// has open is safe — the inode survives until it closes.
+    private static func pruneStagedVideos(in dir: URL, keeping current: URL) {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
+        for url in entries where url.pathExtension == "mov" && url.lastPathComponent != current.lastPathComponent {
+            try? fm.removeItem(at: url)
+        }
+    }
+
+    /// Remove everything we staged, so the extension's container doesn't keep a
+    /// clip around once the feature is off.
+    static func clearStagedVideos() {
+        guard let dir = videosDir else { return }
+        try? FileManager.default.removeItem(at: dir)
     }
 
     /// Tell the extension the staged clip's bytes changed so it swaps on the live
@@ -166,21 +187,29 @@ enum MotionWallpaperStore {
         }
 
         let restored = restoreDesktops(in: root, saved: saved)
-        if let out = try? PropertyListSerialization.data(fromPropertyList: restored, format: .binary, options: 0) {
-            do {
-                try out.write(to: storeURL, options: .atomic)
-            } catch {
-                // Leave the backup in place so the next launch can retry the restore.
-                storeLog.error("deactivate: store write failed — \(error.localizedDescription, privacy: .public)")
-                reloadWallpaperAgent()
-                return
-            }
-        } else {
+        guard let out = try? PropertyListSerialization.data(fromPropertyList: restored, format: .binary, options: 0) else {
             storeLog.error("deactivate: could not serialise restored store")
             reloadWallpaperAgent()
             return
         }
-        discardBackups()
+        do {
+            try out.write(to: storeURL, options: .atomic)
+        } catch {
+            // Leave the backup in place so the next launch can retry the restore.
+            storeLog.error("deactivate: store write failed — \(error.localizedDescription, privacy: .public)")
+            reloadWallpaperAgent()
+            return
+        }
+
+        clearStagedVideos()
+        // Only drop the backup once nothing references us any more. A node we
+        // couldn't restore (no saved content, no usable Idle) would otherwise be
+        // stranded with the only record of the user's wallpaper deleted.
+        if out.range(of: Data(extensionBundleID.utf8)) != nil {
+            storeLog.error("deactivate: some Desktop nodes could not be restored — keeping the backup for the next launch")
+        } else {
+            discardBackups()
+        }
         reloadWallpaperAgent()
     }
 

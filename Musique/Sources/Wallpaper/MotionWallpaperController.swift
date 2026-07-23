@@ -14,6 +14,10 @@ final class MotionWallpaperController {
     private let log = Logger(subsystem: "com.nopxx.musique", category: "MotionWallpaper")
     private var activeContentID: String?
     private var storeActivated = false
+    /// Animated artwork the *current* track wants. A download that lands after the
+    /// track already moved on is dropped, so a slow fetch can't overwrite a newer
+    /// track's clip.
+    private var desiredRemote: URL?
 
     private var enabled: Bool { SettingsStore.shared.bool(["lockscreen", "desktop_animated_wallpaper"]) }
 
@@ -24,6 +28,7 @@ final class MotionWallpaperController {
             disableIfActive()
             return
         }
+        desiredRemote = remote
         // Need the animated file on disk. If it's cached, use it now; otherwise
         // kick off the download and reconcile again when it lands.
         if let local = AnimatedArtworkCache.shared.localURLIfCached(for: remote) {
@@ -32,6 +37,10 @@ final class MotionWallpaperController {
             AnimatedArtworkCache.shared.resolve(remote: remote) { [weak self] local in
                 Task { @MainActor in
                     guard let self, self.enabled else { return }
+                    guard self.desiredRemote == remote else {
+                        self.log.info("dropped stale artwork download — track already moved on")
+                        return
+                    }
                     self.activate(local: local)
                 }
             }
@@ -40,6 +49,7 @@ final class MotionWallpaperController {
 
     /// Turn the feature off: restore the user's previous wallpaper.
     func disableIfActive() {
+        desiredRemote = nil   // also cancels any in-flight download's effect
         guard storeActivated else { return }
         activeContentID = nil
         storeActivated = false

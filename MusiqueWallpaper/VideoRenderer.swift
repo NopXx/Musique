@@ -29,6 +29,11 @@ final class VideoRenderer: @unchecked Sendable {
     private var ptsOffset: CMTime = .zero
     private var lastEnd: CMTime = .zero
 
+    /// Bumped on every swap request. A track load that finishes after a newer
+    /// swap started is dropped, so two reloads in flight can't land out of order
+    /// and leave the older clip on screen.
+    private var swapGeneration: UInt64 = 0
+
     static func create(rootLayer: CALayer, videoURL: URL) async throws -> VideoRenderer {
         let asset = AVURLAsset(url: videoURL)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
@@ -68,17 +73,13 @@ final class VideoRenderer: @unchecked Sendable {
     /// actually showing video (no black flash on the host swap).
     func start(onFirstFrameReady: (@Sendable () -> Void)? = nil) {
         queue.async { [weak self] in
-            guard let self, running, let reader = try? AVAssetReader(asset: asset) else {
-                onFirstFrameReady?(); return
-            }
-            let out = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
-            out.alwaysCopiesSampleData = false
-            reader.add(out)
-            reader.startReading()
-            self.reader = reader
-            self.output = out
+            guard let self, running else { onFirstFrameReady?(); return }
             ptsOffset = .zero
             lastEnd = .zero
+            guard let out = startReading(asset: asset, track: track) else {
+                extLog("start: could not read \(asset.url.lastPathComponent)")
+                onFirstFrameReady?(); return
+            }
 
             CMTimebaseSetTime(timebase, time: .zero)
             if let first = out.copyNextSampleBuffer() {
@@ -98,45 +99,55 @@ final class VideoRenderer: @unchecked Sendable {
     func switchVideo(to url: URL) {
         queue.async { [weak self] in
             guard let self, running, asset.url != url else { return }
-            self.loadAndSwap(url: url)
+            self.loadTrackThenSwap(url: url)
         }
     }
 
-    /// Re-read the current clip *file* in place — the host overwrites it atomically
-    /// (same path, new inode) and pings us, so we swap to the new content without
-    /// forcing WallpaperAgent to reload the whole desktop.
-    /// ponytail: relies on a fresh AVURLAsset re-reading the swapped inode; if a
-    /// same-path clip ever fails to refresh, stage under versioned filenames instead.
-    func reload() {
-        queue.async { [weak self] in
-            guard let self, running else { return }
-            self.loadAndSwap(url: asset.url)
-        }
-    }
-
-    /// Load `url`'s video track and swap the reader over to it. Must run on `queue`.
-    private func loadAndSwap(url: URL) {
+    /// Load `url`'s video track, then hop back onto `queue` to swap the reader over.
+    /// The load deliberately runs *off* the render queue: blocking `queue` on it
+    /// meant a stalled or corrupt clip wedged the queue forever, which also
+    /// deadlocked `stop()`'s `queue.sync` and with it the XPC invalidate path.
+    /// Must be called on `queue`.
+    private func loadTrackThenSwap(url: URL) {
+        swapGeneration &+= 1
+        let generation = swapGeneration
         let newAsset = AVURLAsset(url: url)
-        let sem = DispatchSemaphore(value: 0)
-        nonisolated(unsafe) var loaded: AVAssetTrack?
-        newAsset.loadTracks(withMediaType: .video) { tracks, _ in loaded = tracks?.first; sem.signal() }
-        sem.wait()
-        guard let newTrack = loaded else { return }
+        newAsset.loadTracks(withMediaType: .video) { [weak self] tracks, error in
+            guard let self else { return }
+            guard let newTrack = tracks?.first else {
+                extLog("swap: no video track in \(url.lastPathComponent) — \(error?.localizedDescription ?? "unknown"); keeping current clip")
+                return
+            }
+            queue.async { [weak self] in
+                guard let self, running, generation == swapGeneration else { return }
+                swap(to: newAsset, track: newTrack)
+            }
+        }
+    }
+
+    /// Point the reader at a new asset. If it can't be read, the previous clip is
+    /// kept playing rather than leaving the surface frozen on a stopped timebase.
+    /// Must run on `queue`.
+    private func swap(to newAsset: AVURLAsset, track newTrack: AVAssetTrack) {
+        let previousAsset = asset
+        let previousTrack = track
 
         renderer.stopRequestingMediaData()
         reader?.cancelReading()
-        asset = newAsset
-        track = newTrack
         CMTimebaseSetRate(timebase, rate: 0.0)
         renderer.flush(removingDisplayedImage: false)   // keep last frame until first new one
         ptsOffset = .zero; lastEnd = .zero
         CMTimebaseSetTime(timebase, time: .zero)
 
-        guard let r = try? AVAssetReader(asset: newAsset) else { return }
-        let out = AVAssetReaderTrackOutput(track: newTrack, outputSettings: nil)
-        out.alwaysCopiesSampleData = false
-        r.add(out); r.startReading()
-        reader = r; output = out
+        asset = newAsset
+        track = newTrack
+        guard let out = startReading(asset: newAsset, track: newTrack) else {
+            extLog("swap: reader failed for \(newAsset.url.lastPathComponent) — resuming previous clip")
+            asset = previousAsset
+            track = previousTrack
+            restartLoop()
+            return
+        }
         if let first = out.copyNextSampleBuffer() {
             setDisplayImmediately(first)
             renderer.enqueue(first)
@@ -144,6 +155,23 @@ final class VideoRenderer: @unchecked Sendable {
         }
         CMTimebaseSetRate(timebase, rate: paused ? 0.0 : 1.0)
         feed()
+    }
+
+    /// Build and start a reader/output pair, storing them as the current ones.
+    /// Returns nil if the asset can't be read right now — the host overwrites the
+    /// staged clip in place, so this can fail transiently mid-replace.
+    /// Must run on `queue`.
+    @discardableResult
+    private func startReading(asset: AVURLAsset, track: AVAssetTrack) -> AVAssetReaderTrackOutput? {
+        guard let r = try? AVAssetReader(asset: asset) else { return nil }
+        let out = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        out.alwaysCopiesSampleData = false
+        guard r.canAdd(out) else { return nil }
+        r.add(out)
+        guard r.startReading() else { return nil }
+        reader = r
+        output = out
+        return out
     }
 
     func pause() { queue.async { [weak self] in guard let self, !paused else { return }; paused = true; CMTimebaseSetRate(timebase, rate: 0.0) } }
@@ -185,13 +213,24 @@ final class VideoRenderer: @unchecked Sendable {
 
     /// Rebuild the reader for the next loop iteration, carrying `ptsOffset` forward
     /// so the display timeline never jumps backward.
-    private func restartLoop() {
-        guard running, let r = try? AVAssetReader(asset: asset) else { return }
+    ///
+    /// A reader can transiently fail to open while the host is replacing the staged
+    /// clip, so retry a few times before giving up — bailing out on the first
+    /// failure just stopped the feed loop and froze the wallpaper on its last frame
+    /// with nothing to restart it.
+    private func restartLoop(attempt: Int = 0) {
+        guard running else { return }
         ptsOffset = lastEnd
-        let out = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
-        out.alwaysCopiesSampleData = false
-        r.add(out); r.startReading()
-        reader = r; output = out
+        guard startReading(asset: asset, track: track) != nil else {
+            guard attempt < 5 else {
+                extLog("loop: gave up re-reading \(asset.url.lastPathComponent) after \(attempt) attempts")
+                return
+            }
+            queue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.restartLoop(attempt: attempt + 1)
+            }
+            return
+        }
         feed()
     }
 

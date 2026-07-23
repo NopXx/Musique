@@ -11,11 +11,19 @@ enum WallpaperPaths {
             .appendingPathComponent("videos", isDirectory: true)
     }
 
-    /// Resolve a choice id (the `Configuration` blob macOS hands back in the
-    /// creation request) to its staged `.mov`, if present.
-    static func videoURL(forChoice choiceID: String?) -> URL? {
-        guard let choiceID, !choiceID.isEmpty, let dir = videosDir else { return nil }
-        let url = dir.appendingPathComponent(choiceID).appendingPathExtension("mov")
+    /// Names the clip the host most recently staged. Must match
+    /// `MotionWallpaperStore.pointerFileName`.
+    private static let pointerFileName = "current"
+
+    /// The clip that is current. The host stages every track under its own name
+    /// and records it here, so each swap is a *distinct* URL — the old scheme
+    /// overwrote one fixed path and relied on AVURLAsset noticing the replaced
+    /// inode, which AVFoundation doesn't promise.
+    static func currentVideoURL() -> URL? {
+        guard let dir = videosDir,
+              let name = try? String(contentsOf: dir.appendingPathComponent(pointerFileName), encoding: .utf8)
+        else { return nil }
+        let url = dir.appendingPathComponent(name.trimmingCharacters(in: .whitespacesAndNewlines))
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 }

@@ -26,13 +26,19 @@ final class MusiqueWallpaperExtension: NSObject, AppExtension {
             extLog("launched but dlopen(WallpaperExtensionKit) FAILED: \(err)")
         }
 
-        // Host overwrites the staged clip then posts this Darwin notification; swap
-        // it in on the live surface instead of forcing a desktop reload per song.
-        // Name must match MotionWallpaperStore.switchNotification in the host app.
+        // Host stages the next track's clip then posts this Darwin notification;
+        // swap it in on the live surface instead of forcing a desktop reload per
+        // song. Name must match MotionWallpaperStore.switchNotification.
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             nil,
-            { _, _, _, _, _ in WallpaperState.shared.eachRenderer { $0.reload() } },
+            { _, _, _, _, _ in
+                guard let url = WallpaperPaths.currentVideoURL() else {
+                    extLog("switch: no staged clip to swap to")
+                    return
+                }
+                WallpaperState.shared.eachRenderer { $0.switchVideo(to: url) }
+            },
             "com.nopxx.musique.wallpaper.switch" as CFString,
             nil, .deliverImmediately)
     }

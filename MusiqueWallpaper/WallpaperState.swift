@@ -28,6 +28,14 @@ final class Surface {
 
 /// Process-wide, lock-guarded. Touched from the XPC lifecycle queue and the
 /// renderer/update paths.
+///
+/// ponytail: one `VideoRenderer` — and so one AVAssetReader and one decode — per
+/// surface, even though every surface plays the identical clip. With several
+/// displays that is N hardware decodes of the same file. Suspended surfaces are
+/// paused, which caps the waste at the number of *visible* displays. Sharing a
+/// single reader that fans its sample buffers out to each layer would remove the
+/// rest, at the cost of per-sink backpressure and timebase syncing; do that only
+/// if the duplicate decodes ever show up in a profile.
 final class WallpaperState: @unchecked Sendable {
     static let shared = WallpaperState()
     private init() {}
@@ -37,6 +45,12 @@ final class WallpaperState: @unchecked Sendable {
 
     /// Last presentation mode WallpaperAgent reported ("default", "locked", …).
     var presentationMode = "default"
+
+    /// The mode WallpaperAgent reports for a surface that isn't on screen — a
+    /// sleeping display, a covered surface. Decoding through it burns CPU for
+    /// nothing. Deliberately *not* "locked": this wallpaper exists to be visible
+    /// behind the lock screen.
+    static let suspendedMode = "suspended"
 
     func surface(for key: SurfaceKey) -> Surface? {
         lock.lock(); defer { lock.unlock() }
