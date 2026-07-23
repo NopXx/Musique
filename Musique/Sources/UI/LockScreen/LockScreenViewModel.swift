@@ -22,6 +22,7 @@ final class LockScreenViewModel: ObservableObject {
     @Published var clockUseDynamicColor: Bool = false
     @Published var clockSolidColorStrength: Double = 0.6
     @Published var setSystemWallpaper: Bool = false
+    @Published var desktopAnimatedWallpaper: Bool = false
     @Published var skyLevel: Int = 400
     @Published var skyLevelTest: Bool = false
 
@@ -74,6 +75,7 @@ final class LockScreenViewModel: ObservableObject {
         let op = s.int(["lockscreen", "clock_solid_color_strength"])
         clockSolidColorStrength = op > 0 ? Double(op) / 100.0 : 0.6
         setSystemWallpaper = s.bool(["lockscreen", "set_system_wallpaper"])
+        desktopAnimatedWallpaper = s.bool(["lockscreen", "desktop_animated_wallpaper"])
         let lvl = s.int(["lockscreen", "sky_level"])
         skyLevel = lvl > 0 ? lvl : 400
         skyLevelTest = s.bool(["lockscreen", "sky_level_test"])

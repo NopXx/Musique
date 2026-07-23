@@ -32,20 +32,19 @@ struct ArtworkLockScreenView: View {
         .animation(.easeInOut(duration: 0.4), value: viewModel.fullscreenAnimationActive)
         .animation(.easeInOut(duration: 0.4), value: viewModel.liqoriaStyle)
         .animation(.easeInOut(duration: 0.4), value: viewModel.setSystemWallpaper)
+        .animation(.easeInOut(duration: 0.4), value: viewModel.desktopAnimatedWallpaper)
         .ignoresSafeArea()
     }
 
     private var shouldShow: Bool {
-        // In system-wallpaper mode the real desktop *is* the artwork — don't
-        // cover it with our own background (the crossfade overlay handles the
-        // transition instead).
-        if viewModel.setSystemWallpaper { return false }
-        // Large motion artwork is drawn full-screen by the player view itself —
-        // don't double the animation here.
-        if animationURL != nil, !viewModel.liqoriaStyle,
-           viewModel.isLargeArtwork, !viewModel.fullscreenAnimationActive { return false }
+        // Liqoria draws its own full-screen animated background.
         if viewModel.liqoriaStyle { return !viewModel.fullscreenAnimationActive }
-        return viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
+        // Otherwise: tapping the thumbnail (`isLargeArtwork`) shows a real wallpaper
+        // — a static image, the motion video, or (motion off) a SkyLight video copy
+        // drawn by the player view. In every case this SkyLight *background* stays
+        // clear so it doesn't cover what's behind it. Not enlarged → also clear
+        // (the real desktop shows through). So we never draw our own background.
+        return false
     }
 }
 

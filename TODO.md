@@ -66,7 +66,20 @@
 - [x] Multi-display support (`screens: main | all`)
 - [x] Glass clock style picker
 - [x] Static artwork → real desktop wallpaper (crossfade) + motion overlay
-- [ ] Motion artwork as REAL video lock wallpaper — spike done, feasible but large RE build. See [docs/video-lock-wallpaper-spike.md](docs/video-lock-wallpaper-spike.md). Needs code signing + private `WallpaperExtensionKit` interface reconstruction + appex target.
+- [~] Motion artwork as REAL video wallpaper (macOS 26 `com.apple.wallpaper` extension). Feasibility re-confirmed HIGH; blockers from the spike overturned (no WEK Swift-protocol reconstruction needed — conform public `AppExtension` + ObjC/XPC bridge; ad-hoc/dev signing registers, notarization only for distribution; selection = rewrite `com.apple.wallpaper/Store/Index.plist` + `killall WallpaperAgent`). See docs + memory `macos26-video-lock-wallpaper`.
+  - [x] **Scaffold** — `MusiqueWallpaper` appex target (sandboxed, app-group, `EXExtensionPointIdentifier=com.apple.wallpaper`), `@main AppExtension` + dlopen(WallpaperExtensionKit) + `AppExtensionConfiguration`. Builds + embeds + dev-signed + **registers** (`pluginkit` lists `com.nopxx.musique.wallpaper`).
+  - [x] Bridging header (`MusiqueWallpaper-Bridging-Header.h`: ObjC `WallpaperHostedXPC`/`WallpaperProxyXPC` + private `CAContext`/CGS) — original
+  - [x] `WallpaperXPCHandler` — acquire/update/invalidate real (Mirror-parse request, remote `CAContext`, `WallpaperRemoteContextXPC` ivar poke); snapshot nil; choice/download/migrate/shuffle/settings stubbed
+  - [x] `VideoRenderer` — `AVSampleBufferDisplayLayer` fed by `AVAssetReader` → remote `CAContext`, gapless loop (ptsOffset), `_setDisallowsVideoLayerDisplayCompositing`
+  - [x] Host `MotionWallpaperStore` — stage clip into app-group container, rewrite Index.plist Desktop nodes, `killall WallpaperAgent`, backup/restore, prune (ponytail: no HEVC transcode — extension decodes source directly)
+  - [x] Host `MotionWallpaperController` — observes artwork/snapshot via LockScreenController, auto-swap per track, dedup by choiceID, revert on disable/quit
+  - [x] Settings toggle `lockscreen.desktop_animated_wallpaper` (Lock Screen tab, L10n th/en) + revert-on-stop
+  - [x] Unit test: `testWallpaperRewriteTargetsDesktopOnly` (Desktop rewritten, Idle untouched) — passes
+  - [x] **On-device: WORKING** — desktop becomes the now-playing motion artwork video, live. Mirror field names + `WallpaperRemoteContextXPC` ivar offset + no-`EncodedOptionValues` all turned out fine. Key fix: non-sandboxed host can't write the app-group Group Container (EPERM even when entitled) → stage the video into the extension's OWN container Documents (`~/Library/Containers/com.nopxx.musique.wallpaper/Data/Documents/videos/`), backup kept in host `~/Library/Application Support/Musique/`.
+  - [x] **No `killall` per song** — stable choiceID `musique-motion` + fixed staged file (atomic overwrite) + Darwin notify `com.nopxx.musique.wallpaper.switch` → `VideoRenderer.reload()` swaps clips on the live surface. Plist rewrite + `killall` now only on first activate / deactivate.
+  - [x] **Restore hardening** — backup is now per-Desktop-node (`path → Content`) instead of a whole-file copy of `Index.plist`, and `deactivate()` merges into the *live* store. Fixes desktops not restoring: a Space/display macOS created while we were active was absent from the snapshot and got dropped from the plist entirely. Fallback order per node: saved Content → saved `/SystemDefault` (real desktop image) → sibling Idle (lock-screen image, last resort). `activate()` refuses to rewrite unless the backup persisted, and only then reports itself active.
+  - [ ] Polish (optional): `EncodedOptionValues` crop/color if placement needs tuning; multi-display context options.
+  - Note: reference repos (Mural/geneva) UNLICENSED — studied only, all code original. Feature invasive (replaces real desktop wallpaper, `killall WallpaperAgent` per song) + fragile (≈8 private APIs, breaks on OS updates). Notarize only needed to distribute to other machines.
 
 ### Notifications
 - [x] `NotificationService` — `UNUserNotificationCenter` wrapper

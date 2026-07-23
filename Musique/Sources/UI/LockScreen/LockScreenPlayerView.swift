@@ -34,16 +34,25 @@ struct LockScreenPlayerView: View {
 
                 let showLarge = !liqoria && viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
                 let showInline = liqoria || (!viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive)
-                // System-wallpaper mode shows the native macOS lock-screen
-                // clock through the transparent overlay — don't draw our own.
-                let showClock = viewModel.setSystemWallpaper
-                    ? false
-                    : (liqoria ? !viewModel.fullscreenAnimationActive : showLarge)
+                // The motion wallpaper is only live once the user taps the thumbnail
+                // (enlarge) — until then the lock screen behaves normally.
+                let motionActive = viewModel.desktopAnimatedWallpaper && viewModel.isLargeArtwork && animURL != nil
+                // A SkyLight video copy is drawn full-screen only when a motion
+                // artwork is enlarged but the motion wallpaper is OFF — it covers the
+                // native lock-screen clock, so keep drawing our own then. Otherwise
+                // (real static/motion wallpaper, or not enlarged) the native clock
+                // shows and we hide ours.
+                let skylightVideo = showLarge && animURL != nil && !motionActive
+                let showClock = liqoria ? !viewModel.fullscreenAnimationActive : skylightVideo
 
                 // Motion artwork: fill the screen with the animation itself (no
                 // blur) instead of setting a still as the wallpaper. Tap-to-shrink
                 // is handled by the Color.clear layer above it.
-                if showLarge, let animURL {
+                // In motion-wallpaper mode the REAL desktop already plays the video,
+                // so don't draw a SkyLight copy on top — that would cover the native
+                // lock-screen clock. Keep the background clear so the real video and
+                // the native clock both show.
+                if showLarge, let animURL, !motionActive {
                     AnimatedArtworkView(url: animURL, staticImage: viewModel.artworkImage,
                                         contentMode: .fill, cornerRadius: 0)
                         .frame(width: geo.size.width, height: geo.size.height)
@@ -94,13 +103,13 @@ struct LockScreenPlayerView: View {
                             showInlineArtwork: showInline,
                             onArtworkTap: {
                                 guard !liqoria else { return }
+                                // Enlarge — the controller reacts to `isLargeArtwork`
+                                // and turns on whichever real wallpaper (static or
+                                // motion) its setting allows. Tap is the single
+                                // activation signal for both.
                                 withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                                     viewModel.isLargeArtwork = true
                                 }
-                                // Enlarge and turn on the real wallpaper together
-                                // — static artwork only; motion (animURL != nil)
-                                // is handled separately later.
-                                if animURL == nil { viewModel.setWallpaperEnabled(true) }
                             }
                         )
                     }
@@ -122,13 +131,12 @@ struct LockScreenPlayerView: View {
         .ignoresSafeArea()
     }
 
-    /// Exit large mode and turn the real wallpaper back off — the inverse of the
-    /// thumbnail tap, so enlarge and wallpaper stay coupled.
+    /// Exit large mode — the inverse of the thumbnail tap. The controller reacts
+    /// to `isLargeArtwork` flipping false and restores the previous wallpaper.
     private func shrink() {
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             viewModel.isLargeArtwork = false
         }
-        viewModel.setWallpaperEnabled(false)
     }
 
     private func clockTint(_ vm: LockScreenViewModel) -> Color {

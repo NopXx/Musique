@@ -86,6 +86,7 @@ final class SettingsStore: ObservableObject {
                 "screens": "main",
                 "clock_glass_style": "regular",
                 "set_system_wallpaper": false,
+                "desktop_animated_wallpaper": false,
                 "sky_level": 400,
                 "sky_level_test": false,
             ],

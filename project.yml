@@ -58,6 +58,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
     - target: MusiqueWidget
+    - target: MusiqueWallpaper
     - sdk: ScriptingBridge.framework
   MusiqueWidget:
     type: app-extension
@@ -83,6 +84,33 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.nopxx.musique.widget
         GENERATE_INFOPLIST_FILE: false
         SKIP_INSTALL: true
+  MusiqueWallpaper:
+    type: app-extension
+    platform: macOS
+    sources:
+    - path: MusiqueWallpaper
+    info:
+      path: MusiqueWallpaper/Info.plist
+      properties:
+        CFBundleDisplayName: Musique Motion Wallpaper
+        CFBundlePackageType: XPC!
+        LSMinimumSystemVersion: '26.0'
+        EXAppExtensionAttributes:
+          EXExtensionPointIdentifier: com.apple.wallpaper
+    entitlements:
+      path: MusiqueWallpaper/MusiqueWallpaper.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups:
+        - group.com.nopxx.musique
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nopxx.musique.wallpaper
+        GENERATE_INFOPLIST_FILE: false
+        ENABLE_APP_SANDBOX: true
+        SKIP_INSTALL: true
+        SWIFT_OBJC_BRIDGING_HEADER: MusiqueWallpaper/MusiqueWallpaper-Bridging-Header.h
+        CLANG_ENABLE_MODULES: 'YES'
   MusiqueTests:
     type: bundle.unit-test
     platform: macOS

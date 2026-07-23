@@ -48,6 +48,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var lockscreenScreens: String
     @Published var lockscreenClockGlassStyle: String
     @Published var lockscreenSetSystemWallpaper: Bool
+    @Published var lockscreenDesktopAnimatedWallpaper: Bool
     @Published var lockscreenClockUseDynamicColor: Bool
     @Published var lockscreenClockSolidColorStrength: Double
     @Published var lockscreenSkyLevel: Int
@@ -124,6 +125,7 @@ final class SettingsViewModel: ObservableObject {
         let op = store.int(["lockscreen", "clock_solid_color_strength"])
         self.lockscreenClockSolidColorStrength = op > 0 ? Double(op) : 60
         self.lockscreenSetSystemWallpaper = store.bool(["lockscreen", "set_system_wallpaper"])
+        self.lockscreenDesktopAnimatedWallpaper = store.bool(["lockscreen", "desktop_animated_wallpaper"])
         let sky = store.int(["lockscreen", "sky_level"])
         self.lockscreenSkyLevel = sky > 0 ? sky : 400
         self.lockscreenSkyLevelTest = store.bool(["lockscreen", "sky_level_test"])
@@ -343,6 +345,7 @@ final class SettingsViewModel: ObservableObject {
             "clock_use_dynamic_color": lockscreenClockUseDynamicColor,
             "clock_solid_color_strength": Int(lockscreenClockSolidColorStrength),
             "set_system_wallpaper": lockscreenSetSystemWallpaper,
+            "desktop_animated_wallpaper": lockscreenDesktopAnimatedWallpaper,
             "sky_level": lockscreenSkyLevel,
             "sky_level_test": lockscreenSkyLevelTest,
         ]])
@@ -1098,6 +1101,10 @@ private struct LockscreenTab: View {
                     SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenSystemWallpaper),
                                       isOn: $vm.lockscreenSetSystemWallpaper)
                         .onChange(of: vm.lockscreenSetSystemWallpaper) { _, _ in vm.saveLockscreen() }
+
+                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenMotionWallpaper),
+                                      isOn: $vm.lockscreenDesktopAnimatedWallpaper)
+                        .onChange(of: vm.lockscreenDesktopAnimatedWallpaper) { _, _ in vm.saveLockscreen() }
                 }
 
                 SettingsCard(
