@@ -270,6 +270,16 @@ enum MotionWallpaperStore {
         storeLog.info("restore: set desktop image via AppKit — \(url.lastPathComponent, privacy: .public)")
     }
 
+    /// The user's real wallpaper image as macOS's own store records it, read from
+    /// an `Idle` (lock screen) node — nothing here ever rewrites those, so one
+    /// always holds a genuine image. Last-resort recovery for any part of the app
+    /// that replaced the desktop and lost its own record of what was there.
+    /// It is the lock-screen picture, which can differ from the desktop one.
+    static func realImageFromStore() -> URL? {
+        guard let root = readStore() else { return nil }
+        return firstIdleContent(in: root).flatMap(imageURL(fromContent:))
+    }
+
     /// The image file a `Content` blob points at. Image choices store a nested
     /// binary plist in `Configuration` as `{type: imageFile, url: {relative: …}}`.
     static func imageURL(fromContent content: Any) -> URL? {

@@ -55,10 +55,27 @@ final class SystemWallpaperOperator {
     /// A backup left on disk means a previous session swapped the wallpaper but
     /// never restored it (crash / force-quit while locked). Call once at launch.
     func recoverIfNeeded() {
-        guard savedURLs.isEmpty, let disk = loadBackup() else { return }
-        log.info("Stale wallpaper backup found — restoring user's wallpaper")
-        savedURLs = disk
-        restore()
+        guard savedURLs.isEmpty else { return }
+        if let disk = loadBackup() {
+            log.info("Stale wallpaper backup found — restoring user's wallpaper")
+            savedURLs = disk
+            restore()
+            return
+        }
+        // No backup, but a session that died mid-swap can still have left our
+        // artwork on the desktop with no record of what it replaced. Fall back to
+        // the image macOS's own wallpaper store holds, so the desktop isn't
+        // stranded on a blurred still forever.
+        let stranded = NSScreen.screens.filter { screen in
+            NSWorkspace.shared.desktopImageURL(for: screen).map(isOurArtwork) == true
+        }
+        guard !stranded.isEmpty else { return }
+        guard let real = MotionWallpaperStore.realImageFromStore() else {
+            log.error("Desktop stranded on our artwork and no backup or store image to recover from")
+            return
+        }
+        log.info("Desktop stranded on our artwork — recovering \(stranded.count) screen(s) from the wallpaper store")
+        for screen in stranded { setDesktop(real, for: screen) }
     }
 
     /// Pre-render the wallpaper file for `key` in the background so a later
@@ -73,7 +90,12 @@ final class SystemWallpaperOperator {
     /// Uses the pre-rendered file when `key` matches `prepare`, so the swap lands
     /// with the enlarge animation instead of after a blur+encode delay.
     func apply(image: NSImage, blurRadius: Double = 0, key: String) {
-        captureOriginalsIfNeeded()
+        // Never replace the wallpaper unless the real one is recorded — otherwise
+        // a restore would have nothing to put back and the user's picture is gone.
+        guard captureOriginalsIfNeeded() else {
+            log.error("apply — no restorable wallpaper captured; leaving the desktop alone")
+            return
+        }
         if key == readyKey, let url = readyURL {
             setAll(to: url)
         } else {
@@ -123,14 +145,37 @@ final class SystemWallpaperOperator {
 
     // MARK: - Internals
 
-    private func captureOriginalsIfNeeded() {
-        guard savedURLs.isEmpty else { return }
+    /// Record each display's real wallpaper before the first swap. Returns false if
+    /// nothing restorable was found, in which case the caller must not swap.
+    ///
+    /// Screens already showing one of *our* artwork files are skipped: a session
+    /// that died without restoring leaves them there, and capturing that as the
+    /// "original" is how the user's real picture gets lost for good — restore then
+    /// puts our own blurred artwork back forever.
+    @discardableResult
+    private func captureOriginalsIfNeeded() -> Bool {
+        guard savedURLs.isEmpty else { return true }
+        var captured: [CGDirectDisplayID: URL] = [:]
         for screen in NSScreen.screens {
             guard let id = displayID(screen),
                   let url = NSWorkspace.shared.desktopImageURL(for: screen) else { continue }
-            savedURLs[id] = url
+            guard !isOurArtwork(url) else {
+                log.error("capture — display \(id) already shows our artwork; a prior session never restored it")
+                continue
+            }
+            captured[id] = url
         }
+        guard !captured.isEmpty else { return false }
+        savedURLs = captured
         writeBackup(savedURLs)
+        return true
+    }
+
+    /// True if `url` is one of the artwork files we write, rather than a real
+    /// user wallpaper.
+    private func isOurArtwork(_ url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        return path == artworkA.standardizedFileURL.path || path == artworkB.standardizedFileURL.path
     }
 
     private func setAll(to url: URL) {
