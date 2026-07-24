@@ -100,4 +100,21 @@ final class MusiqueTests: XCTestCase {
         ]
         XCTAssertFalse(MotionWallpaperStore.hasStuckDesktop(in: store))
     }
+
+    /// The AppKit restore needs the real image URL out of an image choice's
+    /// Configuration blob, which is a nested binary plist.
+    func testImageURLDecodesFromContent() throws {
+        let inner: [String: Any] = ["type": "imageFile", "url": ["relative": "file:///Users/x/Pic/wall.jpg"]]
+        let cfg = try PropertyListSerialization.data(fromPropertyList: inner, format: .binary, options: 0)
+        let content: [String: Any] = ["Choices": [[
+            "Provider": "com.apple.wallpaper.choice.image",
+            "Configuration": cfg,
+        ]]]
+        XCTAssertEqual(MotionWallpaperStore.imageURL(fromContent: content),
+                       URL(string: "file:///Users/x/Pic/wall.jpg"))
+        // A motion choice carries no such image URL.
+        let motion: [String: Any] = ["Choices": [["Provider": MotionWallpaperStore.extensionBundleID,
+                                                   "Configuration": Data("musique-motion".utf8)]]]
+        XCTAssertNil(MotionWallpaperStore.imageURL(fromContent: motion))
+    }
 }

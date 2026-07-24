@@ -1,3 +1,4 @@
+import AppKit
 import CryptoKit
 import Foundation
 import os
@@ -176,6 +177,15 @@ enum MotionWallpaperStore {
             storeLog.info("deactivate: no backup — restoring every stuck Desktop from its Idle sibling")
         }
 
+        // The real restore: set the wallpaper through AppKit, which updates
+        // WallpaperAgent's own source of truth. Rewriting Index.plist directly is
+        // not enough — the agent keeps its selection elsewhere and re-projects it
+        // over the file on its next respawn, so a file-only restore reverts to us.
+        // (Public API reaches only the current Space per screen; other Spaces are
+        // covered best-effort by the Index.plist rewrite below and by healIfStuck
+        // when the user next visits them.)
+        restoreDesktopViaAppKit(saved: saved, live: root)
+
         let restored = restoreDesktops(in: root, saved: saved)
         // Settled == no Desktop node points at us any more.
         guard writeStore(restored, satisfies: { !hasStuckDesktop(in: $0) }) else {
@@ -235,6 +245,52 @@ enum MotionWallpaperStore {
               let choices = content["Choices"] as? [[String: Any]],
               let provider = choices.first?["Provider"] as? String else { return false }
         return provider == extensionBundleID
+    }
+
+    /// Set the desktop image through AppKit for every screen, which is the only
+    /// restore that WallpaperAgent treats as authoritative. Picks the user's real
+    /// image from the backup (the system-default desktop, else any saved node),
+    /// falling back to the live store's Idle image — the same picture the lock
+    /// screen already shows. A no-op if none can be found; the Index.plist rewrite
+    /// then remains the only (weaker) restore.
+    private static func restoreDesktopViaAppKit(saved: [String: Any], live: [String: Any]) {
+        let content = defaultDesktopContent(saved)
+            ?? saved.values.first
+            ?? firstIdleContent(in: live)
+        guard let content, let url = imageURL(fromContent: content) else {
+            storeLog.error("restore: no real image to hand AppKit — relying on the store rewrite only")
+            return
+        }
+        MainActor.assumeIsolated {
+            for screen in NSScreen.screens {
+                do { try NSWorkspace.shared.setDesktopImageURL(url, for: screen) }
+                catch { storeLog.error("restore: setDesktopImageURL failed — \(error.localizedDescription, privacy: .public)") }
+            }
+        }
+        storeLog.info("restore: set desktop image via AppKit — \(url.lastPathComponent, privacy: .public)")
+    }
+
+    /// The image file a `Content` blob points at. Image choices store a nested
+    /// binary plist in `Configuration` as `{type: imageFile, url: {relative: …}}`.
+    static func imageURL(fromContent content: Any) -> URL? {
+        guard let dict = content as? [String: Any],
+              let choices = dict["Choices"] as? [[String: Any]],
+              let cfg = choices.first?["Configuration"] as? Data,
+              let inner = (try? PropertyListSerialization.propertyList(from: cfg, format: nil)) as? [String: Any],
+              let urlBox = inner["url"] as? [String: Any],
+              let relative = urlBox["relative"] as? String
+        else { return nil }
+        return URL(string: relative)
+    }
+
+    /// The first Idle (lock-screen) image anywhere in the store — a real image, as
+    /// Idle is never rewritten by us. Last-resort source for the AppKit restore.
+    private static func firstIdleContent(in node: [String: Any]) -> Any? {
+        if let idle = node["Idle"] as? [String: Any], !pointsAtUs(idle), let c = idle["Content"] { return c }
+        for (key, value) in node where key != "Idle" {
+            if let child = value as? [String: Any], let found = firstIdleContent(in: child) { return found }
+        }
+        return nil
     }
 
     /// Path key for a container holding a `Desktop` node, e.g.
