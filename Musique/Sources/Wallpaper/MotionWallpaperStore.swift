@@ -1,5 +1,4 @@
 import AppKit
-import AVFoundation
 import CryptoKit
 import Foundation
 import os
@@ -148,47 +147,10 @@ enum MotionWallpaperStore {
 
         // Never replace the user's wallpaper unless we can put it back.
         guard backupOnce(root) else { return false }
-
-        // Kill the black flash: the store rewrite reloads WallpaperAgent, which
-        // shows nothing for our node until the extension has decoded its first
-        // video frame (~1s). Set the video's own first frame as a still image
-        // first, so the desktop goes real → artwork still → motion instead of
-        // real → black → motion. Best-effort; skipped if the poster can't render.
-        setDesktopPoster(from: videoURL)
-
         root = rewriteDesktop(in: root, choiceID: choiceID, videoURL: videoURL)
 
         // Settled == the store actually points at us.
         return writeStore(root, satisfies: { hasStuckDesktop(in: $0) })
-    }
-
-    /// Render the first frame of `videoURL` to a JPEG and set it as the desktop
-    /// image on every screen through AppKit, as an instant no-black placeholder
-    /// under the motion wallpaper that is about to take over.
-    private static func setDesktopPoster(from videoURL: URL) {
-        let asset = AVURLAsset(url: videoURL)
-        let gen = AVAssetImageGenerator(asset: asset)
-        gen.appliesPreferredTrackTransform = true
-        guard let cg = try? gen.copyCGImage(at: .zero, actualTime: nil) else {
-            storeLog.info("poster: could not render first frame — activating without a placeholder")
-            return
-        }
-        let rep = NSBitmapImageRep(cgImage: cg)
-        guard let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.9]) else { return }
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Musique/motion-poster.jpg")
-        do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try jpeg.write(to: url, options: .atomic)
-        } catch {
-            storeLog.error("poster: write failed — \(error.localizedDescription, privacy: .public)")
-            return
-        }
-        MainActor.assumeIsolated {
-            for screen in NSScreen.screens {
-                try? NSWorkspace.shared.setDesktopImageURL(url, for: screen)
-            }
-        }
     }
 
     /// Restore the user's wallpaper. Always works from the *live* store — every
