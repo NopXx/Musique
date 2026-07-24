@@ -148,7 +148,8 @@ enum MotionWallpaperStore {
         guard backupOnce(root) else { return false }
         root = rewriteDesktop(in: root, choiceID: choiceID, videoURL: videoURL)
 
-        return writeStore(root)
+        // Settled == the store actually points at us.
+        return writeStore(root, satisfies: { hasStuckDesktop(in: $0) })
     }
 
     /// Restore the user's wallpaper. Always works from the *live* store — every
@@ -176,7 +177,8 @@ enum MotionWallpaperStore {
         }
 
         let restored = restoreDesktops(in: root, saved: saved)
-        guard writeStore(restored) else {
+        // Settled == no Desktop node points at us any more.
+        guard writeStore(restored, satisfies: { !hasStuckDesktop(in: $0) }) else {
             // Leave the backup in place so the next launch can retry the restore.
             return
         }
@@ -359,27 +361,49 @@ enum MotionWallpaperStore {
     /// write with no `EncodedOptionValues` comes back with that key present — the
     /// agent authored it, not us.) Stop the agent, wait for it to actually go, and
     /// write into the gap; launchd respawns it and it reads our file on startup.
-    private static func writeStore(_ root: [String: Any]) -> Bool {
+    /// Write, then confirm WallpaperAgent honoured it rather than clobbering it.
+    ///
+    /// Two hazards, both from toggling on and off quickly:
+    ///  - the agent flushes its in-memory state as it dies, so we write only after
+    ///    it has actually exited (`stopWallpaperAgentAndWait`);
+    ///  - the *next* toggle's killall misses an agent that launchd hasn't respawned
+    ///    yet, letting a stale-state agent boot and overwrite us — so we wait for
+    ///    the respawn before returning, and the toggle after can always kill it.
+    /// If a respawned agent still clobbers the store, retry the whole sequence.
+    /// `isSatisfied` describes the intended end state (points at us / doesn't).
+    private static func writeStore(_ root: [String: Any], satisfies isSatisfied: ([String: Any]) -> Bool) -> Bool {
         guard let out = try? PropertyListSerialization.data(fromPropertyList: root, format: .binary, options: 0) else {
             storeLog.error("store write: could not serialise")
             return false
         }
-        stopWallpaperAgentAndWait()
-        do {
-            try out.write(to: storeURL, options: .atomic)
-        } catch {
-            storeLog.error("store write failed — \(error.localizedDescription, privacy: .public)")
-            bounceWallpaperAgent()
-            return false
+        for attempt in 1...3 {
+            stopWallpaperAgentAndWait()
+            do {
+                try out.write(to: storeURL, options: .atomic)
+            } catch {
+                storeLog.error("store write failed — \(error.localizedDescription, privacy: .public)")
+                bounceWallpaperAgent()
+                return false
+            }
+            waitForWallpaperAgentRespawn()
+            if let live = readStore(), isSatisfied(live) { return true }
+            storeLog.error("store not settled after WallpaperAgent respawn (attempt \(attempt)) — retrying")
         }
-        return true
+        storeLog.error("store still not settled after 3 attempts")
+        return false
+    }
+
+    private static func readStore() -> [String: Any]? {
+        guard let data = try? Data(contentsOf: storeURL) else { return nil }
+        return (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
     }
 
     /// SIGTERM WallpaperAgent and wait for it to exit. launchd brings it right
     /// back, so this is a reload rather than a shutdown.
     /// ponytail: bounded busy-wait on the main thread — the agent normally goes in
-    /// well under 100ms. If the stall ever shows at lock/unlock, move the whole
-    /// activate/deactivate off the main actor rather than shortening the wait.
+    /// well under 100ms and the retry loop rarely fires, but the ceiling is a few
+    /// seconds. If the stall ever shows at lock/unlock, move the whole
+    /// activate/deactivate off the main actor rather than shortening the waits.
     private static func stopWallpaperAgentAndWait() {
         let pids = wallpaperAgentPIDs()
         bounceWallpaperAgent()
@@ -391,6 +415,17 @@ enum MotionWallpaperStore {
         if pids.contains(where: { kill($0, 0) == 0 }) {
             storeLog.error("agent still alive after 1s — writing anyway, it may overwrite us")
         }
+    }
+
+    /// Wait for launchd to bring WallpaperAgent back after a kill, so a subsequent
+    /// toggle's killall can't miss it and let a stale agent boot over our write.
+    /// It also gives the fresh agent time to load the store we just wrote.
+    private static func waitForWallpaperAgentRespawn() {
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline, wallpaperAgentPIDs().isEmpty {
+            usleep(100_000)
+        }
+        usleep(300_000)   // let it read the store on startup before we check
     }
 
     private static func wallpaperAgentPIDs() -> [pid_t] {
