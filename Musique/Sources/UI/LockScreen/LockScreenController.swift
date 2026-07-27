@@ -35,6 +35,12 @@ final class LockScreenController {
         // Recover any desktop a prior session left stuck on our wallpaper provider.
         MotionWallpaperStore.healIfStuck()
 
+        // The overlay draws its own video copy until the real desktop is playing
+        // ours — so a slow or failed activation doesn't leave the lock screen bare.
+        motionWallpaper.onLiveChange = { [weak viewModel] live in
+            viewModel?.motionWallpaperLive = live
+        }
+
         let dnc = DistributedNotificationCenter.default()
         dnc.addObserver(self,
                         selector: #selector(handleScreenLocked),

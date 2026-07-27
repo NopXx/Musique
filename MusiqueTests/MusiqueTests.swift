@@ -117,4 +117,29 @@ final class MusiqueTests: XCTestCase {
                                                    "Configuration": Data("musique-motion".utf8)]]]
         XCTAssertNil(MotionWallpaperStore.imageURL(fromContent: motion))
     }
+
+    /// A desktop showing the lock-screen artwork still (written by
+    /// `SystemWallpaperOperator`, not the user) must never be backed up as the
+    /// wallpaper to restore — that is how the desktop gets stuck on a frozen
+    /// artwork frame. It counts as stuck, so a restore repairs it instead.
+    func testBackupSkipsOurOwnArtworkStill() throws {
+        let still = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Musique/lockscreen-wallpaper-a.jpg")
+        let userPic = URL(string: "file:///Users/x/Pictures/wall.jpg")!
+        func imageContent(_ url: URL) throws -> [String: Any] {
+            let cfg = try PropertyListSerialization.data(
+                fromPropertyList: ["type": "imageFile", "url": ["relative": url.absoluteString]],
+                format: .binary, options: 0)
+            return ["Choices": [["Provider": "com.apple.wallpaper.choice.image", "Configuration": cfg]]]
+        }
+        let store: [String: Any] = [
+            "Displays": [
+                "ours": ["Desktop": ["Content": try imageContent(still)]],
+                "real": ["Desktop": ["Content": try imageContent(userPic)]],
+            ],
+        ]
+        let saved = MotionWallpaperStore.collectDesktopContents(in: store)
+        XCTAssertEqual(Array(saved.keys), ["/Displays/real"])
+        XCTAssertTrue(MotionWallpaperStore.hasStuckDesktop(in: store))
+    }
 }

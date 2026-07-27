@@ -18,8 +18,19 @@ final class MotionWallpaperController {
     /// track already moved on is dropped, so a slow fetch can't overwrite a newer
     /// track's clip.
     private var desiredRemote: URL?
+    /// Clip whose staging failed; skipped until a different one comes along.
+    private var failedStagingSource: URL?
 
     private var enabled: Bool { SettingsStore.shared.bool(["lockscreen", "desktop_animated_wallpaper"]) }
+
+    /// Called whenever the wallpaper starts or stops actually playing our clip, so
+    /// the lock screen knows whether the real desktop is showing the artwork or it
+    /// has to draw its own copy (activation is slow and can fail outright).
+    var onLiveChange: ((Bool) -> Void)?
+
+    private var isLive = false {
+        didSet { if isLive != oldValue { onLiveChange?(isLive) } }
+    }
 
     /// Reconcile the wallpaper with the current track's animated artwork.
     /// Call on track change, artwork-resolved, and settings change.
@@ -50,6 +61,7 @@ final class MotionWallpaperController {
     /// Turn the feature off: restore the user's previous wallpaper.
     func disableIfActive() {
         desiredRemote = nil   // also cancels any in-flight download's effect
+        isLive = false
         guard storeActivated else { return }
         activeContentID = nil
         storeActivated = false
@@ -58,15 +70,23 @@ final class MotionWallpaperController {
     }
 
     private func activate(local: URL) {
+        // Staging fails for the whole session when the extension's container isn't
+        // writable (macOS withholds access to another app's data). `sync` runs on
+        // every 1 Hz tick, so without this the failure repeats — and re-logs —
+        // once a second for as long as the lock screen is up.
+        guard local != failedStagingSource else { return }
         guard let staged = MotionWallpaperStore.stage(localVideo: local) else {
-            log.error("failed to stage motion wallpaper video")
+            failedStagingSource = local
+            log.error("failed to stage motion wallpaper video — not retrying this clip")
             return
         }
+        failedStagingSource = nil
         guard staged.contentID != activeContentID else { return }   // already showing this clip
         if storeActivated {
             // Live swap: file already overwritten, just tell the extension.
             activeContentID = staged.contentID
             MotionWallpaperStore.announceSwitch()
+            isLive = true
             log.info("motion wallpaper swapped — content \(staged.contentID, privacy: .public)")
         } else {
             // First activation: point the store at us + reload the agent once.
@@ -79,6 +99,7 @@ final class MotionWallpaperController {
             }
             activeContentID = staged.contentID
             storeActivated = true
+            isLive = true
             log.info("motion wallpaper activated — content \(staged.contentID, privacy: .public)")
         }
     }

@@ -239,12 +239,27 @@ enum MotionWallpaperStore {
         return false
     }
 
-    /// True if a `Desktop`/`Idle` node's Content is served by our extension.
+    /// True if a `Desktop`/`Idle` node's Content is served by our extension, or is
+    /// a plain image *we* wrote (the lock-screen artwork still that
+    /// `SystemWallpaperOperator` sets). Both mean "not the user's wallpaper", so
+    /// neither may be backed up as the thing to restore.
     private static func pointsAtUs(_ node: [String: Any]) -> Bool {
-        guard let content = node["Content"] as? [String: Any],
-              let choices = content["Choices"] as? [[String: Any]],
-              let provider = choices.first?["Provider"] as? String else { return false }
-        return provider == extensionBundleID
+        guard let content = node["Content"] as? [String: Any] else { return false }
+        if let choices = content["Choices"] as? [[String: Any]],
+           choices.first?["Provider"] as? String == extensionBundleID { return true }
+        return imageURL(fromContent: content).map(isMusiqueFile) ?? false
+    }
+
+    /// True if `url` is a file Musique itself wrote — the blurred artwork stills in
+    /// our Application Support dir, or a clip staged in the extension's container.
+    /// Backing one of these up as the "original" wallpaper is how the desktop ends
+    /// up stuck on a frozen artwork frame: restore would put our own file back.
+    static func isMusiqueFile(_ url: URL) -> Bool {
+        guard url.isFileURL else { return false }
+        let path = url.standardizedFileURL.path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return path.hasPrefix(home + "/Library/Application Support/Musique/")
+            || path.hasPrefix(home + "/Library/Containers/\(extensionBundleID)/")
     }
 
     /// Set the desktop image through AppKit for every screen, which is the only
@@ -314,9 +329,18 @@ enum MotionWallpaperStore {
     /// nodes that survived.
     static func collectDesktopContents(in node: [String: Any], path: String = "") -> [String: Any] {
         var out: [String: Any] = [:]
-        if let desktop = node["Desktop"] as? [String: Any],
-           !pointsAtUs(desktop), let content = desktop["Content"] {
-            out[pathKey(path)] = content
+        if let desktop = node["Desktop"] as? [String: Any] {
+            if !pointsAtUs(desktop), let content = desktop["Content"] {
+                out[pathKey(path)] = content
+            } else if let idle = node["Idle"] as? [String: Any],
+                      !pointsAtUs(idle), let content = idle["Content"] {
+                // Desktop is already ours (our provider, or the artwork still the
+                // lock screen painted a moment ago). Back up the sibling Idle image
+                // instead of nothing: it's a real picture, and without it a lock
+                // that swaps the static wallpaper first would leave the backup
+                // empty and block the motion wallpaper from ever activating.
+                out[pathKey(path)] = content
+            }
         }
         for (key, value) in node where key != "Desktop" && key != "Idle" {
             guard let child = value as? [String: Any] else { continue }

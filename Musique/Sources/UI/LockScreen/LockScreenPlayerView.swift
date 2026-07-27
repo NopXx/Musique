@@ -34,9 +34,11 @@ struct LockScreenPlayerView: View {
 
                 let showLarge = !liqoria && viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
                 let showInline = liqoria || (!viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive)
-                // The motion wallpaper is only live once the user taps the thumbnail
-                // (enlarge) — until then the lock screen behaves normally.
-                let motionActive = viewModel.desktopAnimatedWallpaper && viewModel.isLargeArtwork && animURL != nil
+                // Only stand down once the real desktop is *actually* playing our
+                // clip. Activation takes seconds and can fail (unwritable wallpaper
+                // store, nothing restorable to back up); trusting the setting alone
+                // left the lock screen showing no artwork at all in those cases.
+                let motionActive = viewModel.motionWallpaperLive && animURL != nil
                 // A SkyLight video copy is drawn full-screen only when a motion
                 // artwork is enlarged but the motion wallpaper is OFF — it covers the
                 // native lock-screen clock, so keep drawing our own then. Otherwise

@@ -171,11 +171,12 @@ final class SystemWallpaperOperator {
         return true
     }
 
-    /// True if `url` is one of the artwork files we write, rather than a real
-    /// user wallpaper.
+    /// True if `url` is a file Musique wrote (an artwork still, a staged motion
+    /// clip) rather than a real user wallpaper. Whole-directory rather than just
+    /// the A/B pair, so a still left by an older build — or the motion wallpaper —
+    /// can't be captured as the "original" either.
     private func isOurArtwork(_ url: URL) -> Bool {
-        let path = url.standardizedFileURL.path
-        return path == artworkA.standardizedFileURL.path || path == artworkB.standardizedFileURL.path
+        MotionWallpaperStore.isMusiqueFile(url)
     }
 
     private func setAll(to url: URL) {

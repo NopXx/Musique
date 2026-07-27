@@ -26,6 +26,12 @@ final class LockScreenViewModel: ObservableObject {
     @Published var skyLevel: Int = 400
     @Published var skyLevelTest: Bool = false
 
+    /// True only once the motion wallpaper is *actually* playing on the real
+    /// desktop. The overlay stops drawing its own video copy then; while this is
+    /// false — activation still running, or it failed — the copy keeps the artwork
+    /// on screen instead of leaving the lock screen bare.
+    @Published var motionWallpaperLive: Bool = false
+
     /// The *outgoing* wallpaper image, shown full-screen at opacity 1 to mask an
     /// instant real-desktop swap, then faded to nil to reveal the new desktop —
     /// a crossfade over the un-animatable `setDesktopImageURL`. Driven by
