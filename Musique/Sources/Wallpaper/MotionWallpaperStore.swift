@@ -33,14 +33,17 @@ enum MotionWallpaperStore {
 
     // MARK: Staging
 
-    /// The wallpaper extension's own sandbox container Documents dir. The host is
-    /// not sandboxed, so it writes here directly (macOS may prompt once to allow
-    /// access to another app's data). The extension reads its own Documents. The
-    /// app group can't be used — a non-sandboxed host is denied write access to the
-    /// group container even with the entitlement.
+    /// Staging dir inside the shared app-group container — the one place both the
+    /// non-sandboxed host and the sandboxed extension can reach.
+    ///
+    /// Writing into the extension's own container instead (the previous scheme)
+    /// needs the user's "access data from other apps" grant, which macOS revokes
+    /// whenever the app's signature changes — one unsigned build and the motion
+    /// wallpaper silently stopped staging anything at all. Must match
+    /// `WallpaperPaths.videosDir`.
     private static var videosDir: URL? {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/\(extensionBundleID)/Data/Documents/videos", isDirectory: true)
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
+            .appendingPathComponent("videos", isDirectory: true)
     }
 
     /// Content id for a source file = hash of its path, used only to dedup "same

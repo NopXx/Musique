@@ -1,13 +1,15 @@
 import Foundation
 
-/// Where the host app stages motion-artwork videos for us to play. The host (not
-/// sandboxed) writes into *this extension's* container Documents; we (sandboxed)
-/// read our own container freely. One flat directory of `<choiceID>.mov`.
-/// (The app group can't be used: a non-sandboxed host is denied write access to
-/// the group container even with the entitlement.)
+/// Where the host app stages motion-artwork videos for us to play: the shared
+/// app-group container, one flat directory of `<contentID>.mov`. Both sides reach
+/// it by entitlement alone — no user grant to lose. The group id is team-ID
+/// prefixed because the host is *not* sandboxed and macOS resolves a container for
+/// such a process only in that form. Must match `MotionWallpaperStore.videosDir`.
 enum WallpaperPaths {
+    static let appGroupID = "H4M5HWBU2K.group.com.nopxx.musique"
+
     static var videosDir: URL? {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
             .appendingPathComponent("videos", isDirectory: true)
     }
 

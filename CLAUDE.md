@@ -44,7 +44,7 @@ Other scripts: `scripts/build-dmg.sh`, `scripts/clean-builds.sh`, `scripts/wipe-
 
 Three targets defined in [project.yml](project.yml):
 
-- **Musique** — main app. `LSUIElement=true` (menu bar agent). Entitlements: apple-events, network.client, app-group `group.com.nopxx.musique`, disable-library-validation (for SkyLight dlopen).
+- **Musique** — main app. `LSUIElement=true` (menu bar agent). Entitlements: apple-events, network.client, app-group `H4M5HWBU2K.group.com.nopxx.musique` (team-ID prefixed — a non-sandboxed macOS process gets no container for the plain `group.` form), disable-library-validation (for SkyLight dlopen).
 - **MusiqueWidget** — WidgetKit app extension. Sandboxed. Shares app-group JSON.
 - **MusiqueTests** — unit test bundle.
 

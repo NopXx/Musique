@@ -4,7 +4,11 @@ import AppKit
 import AVFoundation
 import Combine
 
-let appGroupID = "group.com.nopxx.musique"
+/// Team-ID-prefixed on purpose: macOS only resolves an app-group container for a
+/// *non-sandboxed* process (this app) when the identifier starts with the team id.
+/// With the plain `group.` form the host's every write fell back to a temp dir the
+/// sandboxed widget and wallpaper extension can't read.
+let appGroupID = "H4M5HWBU2K.group.com.nopxx.musique"
 
 struct NowPlayingWidgetData: Codable {
     var title: String

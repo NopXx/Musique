@@ -47,7 +47,7 @@ targets:
         com.apple.security.network.client: true
         com.apple.security.cs.disable-library-validation: true
         com.apple.security.application-groups:
-        - group.com.nopxx.musique
+        - H4M5HWBU2K.group.com.nopxx.musique
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nopxx.musique
@@ -81,7 +81,7 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.application-groups:
-        - group.com.nopxx.musique
+        - H4M5HWBU2K.group.com.nopxx.musique
         com.apple.security.network.client: true
         com.apple.security.files.downloaded.read-only: true
     settings:
@@ -107,7 +107,7 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.application-groups:
-        - group.com.nopxx.musique
+        - H4M5HWBU2K.group.com.nopxx.musique
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nopxx.musique.wallpaper

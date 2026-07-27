@@ -3,7 +3,9 @@ import SwiftUI
 import AppIntents
 import AppKit
 
-let widgetAppGroupID = "group.com.nopxx.musique"
+/// Must match the host's `appGroupID` — team-ID-prefixed, the only form the
+/// non-sandboxed host can open a container for.
+let widgetAppGroupID = "H4M5HWBU2K.group.com.nopxx.musique"
 
 func widgetDataFileURL() -> URL {
     let fm = FileManager.default
