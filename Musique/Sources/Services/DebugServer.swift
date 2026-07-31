@@ -126,7 +126,7 @@ final class DebugServer {
 
     private func collectSnapshot() -> [String: Any] {
         guard let s = playerMonitor?.snapshot else { return [:] }
-        return [
+        var out: [String: Any] = [
             "state": s.state,
             "title": s.title,
             "artist": s.artist,
@@ -137,6 +137,19 @@ final class DebugServer {
             "isPlaying": s.isPlaying,
             "hasTrack": s.hasTrack,
         ]
+        // What the player reports, before edit rules. Every UI surface — mini
+        // player, menu bar, lock screen, widget — shows the rewritten values, so
+        // carry those too when a rule changes something; otherwise the dashboard
+        // and the app look like they disagree about the same track.
+        let edited = EditHistoryService.shared.apply(s)
+        if edited.title != s.title || edited.artist != s.artist || edited.album != s.album {
+            out["edited"] = [
+                "title": edited.title,
+                "artist": edited.artist,
+                "album": edited.album,
+            ]
+        }
+        return out
     }
 
     private func collectAll() -> [String: Any] {
@@ -298,6 +311,7 @@ final class DebugServer {
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .card { background: #1a1d24; border: 1px solid #262a33; border-radius: 8px; padding: 12px; min-width: 0; }
   .card h2 { font-size: 12px; text-transform: uppercase; margin: 0 0 8px; color: #94a3b8; letter-spacing: 1px; }
+  .card h2 small { text-transform: none; letter-spacing: 0; color: #64748b; font-weight: 400; }
   pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #d1d5db; max-height: 360px; overflow: auto; }
   .topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
   .pill { background: #1a1d24; border: 1px solid #262a33; padding: 4px 8px; border-radius: 999px; color: #94a3b8; font-size: 11px; }
@@ -323,7 +337,7 @@ final class DebugServer {
   </div>
   <div class="grid">
     <div class="card"><h2>snapshot</h2><pre id="snapshot">—</pre></div>
-    <div class="card"><h2>raw track</h2><pre id="raw">—</pre></div>
+    <div class="card"><h2>raw track <small>(cached — hit refresh to re-read)</small></h2><pre id="raw">—</pre></div>
     <div class="card">
       <h2>audio · default 10 (60Hz–14kHz log)</h2>
       <div class="bands" id="bands"></div>
