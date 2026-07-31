@@ -140,7 +140,7 @@ enum MotionWallpaperStore {
     /// not record itself as active in that case, or `deactivate()` will later
     /// "restore" a wallpaper we never replaced.
     @discardableResult
-    static func activate(choiceID: String, videoURL: URL) -> Bool {
+    static func activate(choiceID: String, videoURL: URL, onlyDisplayUUID: String? = nil) -> Bool {
         guard let data = try? Data(contentsOf: storeURL),
               var root = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
         else {
@@ -150,7 +150,7 @@ enum MotionWallpaperStore {
 
         // Never replace the user's wallpaper unless we can put it back.
         guard backupOnce(root) else { return false }
-        root = rewriteDesktop(in: root, choiceID: choiceID, videoURL: videoURL)
+        root = rewriteDesktop(in: root, choiceID: choiceID, videoURL: videoURL, onlyDisplayUUID: onlyDisplayUUID)
 
         // Settled == the store actually points at us.
         return writeStore(root, satisfies: { hasStuckDesktop(in: $0) })
@@ -469,14 +469,26 @@ enum MotionWallpaperStore {
 
     /// Replace the `Content` of every `Desktop` node with a single choice provided
     /// by our extension. Idle / screen-saver nodes are left untouched.
+    ///
+    /// `onlyDisplayUUID` limits the takeover to one display ("main display only"
+    /// in settings): only Desktop nodes living under a `Displays/<uuid>` container
+    /// for that display are rewritten — display-wide and per-Space alike — while
+    /// `AllSpacesAndDisplays` / Space `Default` nodes are left alone, since those
+    /// cover every display at once. A per-display node is more specific than its
+    /// Space default, so WallpaperAgent shows us on that display only.
+    /// ponytail: a Space with no per-display node for that display keeps its
+    /// default wallpaper there — synthesising one is the upgrade if it shows.
+    ///
     /// ponytail: EncodedOptionValues (crop placement + average colour blob that
     /// System Settings normally writes) is omitted — add one here if WallpaperAgent
     /// refuses the choice without it.
-    static func rewriteDesktop(in node: [String: Any], choiceID: String, videoURL: URL) -> [String: Any] {
+    static func rewriteDesktop(in node: [String: Any], choiceID: String, videoURL: URL,
+                               onlyDisplayUUID: String? = nil, path: String = "") -> [String: Any] {
         var result = node
         for (key, value) in node {
             guard var child = value as? [String: Any] else { continue }
             if key == "Desktop", child["Content"] is [String: Any] {
+                if let uuid = onlyDisplayUUID, !path.hasSuffix("/Displays/\(uuid)") { continue }
                 child["Content"] = [
                     "Choices": [[
                         "Configuration": Data(choiceID.utf8),
@@ -489,7 +501,8 @@ enum MotionWallpaperStore {
                 child["LastUse"] = Date()
                 result[key] = child
             } else {
-                result[key] = rewriteDesktop(in: child, choiceID: choiceID, videoURL: videoURL)
+                result[key] = rewriteDesktop(in: child, choiceID: choiceID, videoURL: videoURL,
+                                             onlyDisplayUUID: onlyDisplayUUID, path: path + "/" + key)
             }
         }
         return result

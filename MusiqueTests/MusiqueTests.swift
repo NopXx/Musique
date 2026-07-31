@@ -158,4 +158,35 @@ final class MusiqueTests: XCTestCase {
         XCTAssertEqual(MotionWallpaperStore.savedContent(forDisplay: "D2", in: saved) as? String, "d2-space1")
         XCTAssertNil(MotionWallpaperStore.savedContent(forDisplay: "D3", in: saved))
     }
+
+    /// "Main display only": the rewrite must touch only Desktop nodes under the
+    /// target display's `Displays/<uuid>` containers — the other display, the
+    /// all-displays node, and Space defaults keep the user's wallpaper.
+    func testRewriteCanTargetOneDisplay() {
+        let image: [String: Any] = ["Content": ["Choices": [["Provider": "com.apple.wallpaper.choice.image"]]]]
+        let store: [String: Any] = [
+            "AllSpacesAndDisplays": ["Desktop": image],
+            "Displays": ["D1": ["Desktop": image], "D2": ["Desktop": image]],
+            "Spaces": ["S1": [
+                "Default": ["Desktop": image],
+                "Displays": ["D1": ["Desktop": image], "D2": ["Desktop": image]],
+            ]],
+        ]
+        let out = MotionWallpaperStore.rewriteDesktop(
+            in: store, choiceID: "c", videoURL: URL(fileURLWithPath: "/tmp/x.mov"),
+            onlyDisplayUUID: "D1")
+        func provider(_ path: [String]) -> String? {
+            var node: Any? = out
+            for key in path { node = (node as? [String: Any])?[key] }
+            let content = (node as? [String: Any])?["Content"] as? [String: Any]
+            return (content?["Choices"] as? [[String: Any]])?.first?["Provider"] as? String
+        }
+        let ours = MotionWallpaperStore.extensionBundleID
+        XCTAssertEqual(provider(["Displays", "D1", "Desktop"]), ours)
+        XCTAssertEqual(provider(["Spaces", "S1", "Displays", "D1", "Desktop"]), ours)
+        XCTAssertEqual(provider(["Displays", "D2", "Desktop"]), "com.apple.wallpaper.choice.image")
+        XCTAssertEqual(provider(["Spaces", "S1", "Displays", "D2", "Desktop"]), "com.apple.wallpaper.choice.image")
+        XCTAssertEqual(provider(["AllSpacesAndDisplays", "Desktop"]), "com.apple.wallpaper.choice.image")
+        XCTAssertEqual(provider(["Spaces", "S1", "Default", "Desktop"]), "com.apple.wallpaper.choice.image")
+    }
 }

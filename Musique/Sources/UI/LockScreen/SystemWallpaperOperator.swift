@@ -179,8 +179,17 @@ final class SystemWallpaperOperator {
         MotionWallpaperStore.isMusiqueFile(url)
     }
 
+    /// Screens the artwork wallpaper should cover — the same `lockscreen.screens`
+    /// choice the overlay windows follow, so "main display only" doesn't still
+    /// repaint every desktop.
+    private var targetScreens: [NSScreen] {
+        SettingsStore.shared.string(["lockscreen", "screens"]) == "all"
+            ? NSScreen.screens
+            : [NSScreen.main].compactMap { $0 }
+    }
+
     private func setAll(to url: URL) {
-        for screen in NSScreen.screens { setDesktop(url, for: screen) }
+        for screen in targetScreens { setDesktop(url, for: screen) }
     }
 
     private func setDesktop(_ url: URL, for screen: NSScreen) {
