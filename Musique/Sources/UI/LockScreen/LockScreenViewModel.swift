@@ -60,6 +60,20 @@ final class LockScreenViewModel: ObservableObject {
                 self.handleTrackUpdate(edited)
             }
             .store(in: &cancellables)
+
+        // Artwork the user picked in the mini player wins here too — otherwise
+        // the lock screen shows the looked-up cover while every other surface
+        // shows theirs. Re-resolve on change: the same track keeps its key, so
+        // `handleTrackUpdate` would otherwise skip the work.
+        NotificationCenter.default
+            .publisher(for: CustomArtworkStore.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                lastArtworkKey = ""
+                handleTrackUpdate(snapshot)
+            }
+            .store(in: &cancellables)
     }
 
     private func readSettings() {
@@ -98,6 +112,13 @@ final class LockScreenViewModel: ObservableObject {
         guard key != lastArtworkKey else { return }
         lastArtworkKey = key
 
+        // A cover the user chose for this track wins over the looked-up one, the
+        // same way it does in the mini player, the menu bar and the widget.
+        if let customURL = CustomArtworkStore.shared.localURL(for: snap) {
+            applyCustomArtwork(customURL, for: snap)
+            return
+        }
+
         let title = snap.title, artist = snap.artist, album = snap.album
         Task { [weak self] in
             let result = await ArtworkService.shared.lookup(title: title, artist: artist, album: album)
@@ -122,6 +143,27 @@ final class LockScreenViewModel: ObservableObject {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Show a user-chosen image (a local file) as the artwork, carrying the
+    /// motion-artwork URLs stored alongside it so a chosen animated cover still
+    /// plays — on the lock screen *and* as the video wallpaper.
+    private func applyCustomArtwork(_ url: URL, for snap: NowPlayingSnapshot) {
+        let urlStr = url.absoluteString
+        let anim = CustomArtworkStore.shared.animationURLs(for: snap)
+        artwork = ArtworkResult(artworkURL: urlStr,
+                                animationURL: anim.square,
+                                animationTallURL: anim.tall)
+        artworkImage = NSImage(contentsOf: url)
+        guard urlStr != lastPaletteURL else { return }
+        lastPaletteURL = urlStr
+        Task { [weak self] in
+            let palette = await ColorExtractor.shared.palette(for: urlStr)
+            await MainActor.run {
+                guard let self, self.lastPaletteURL == urlStr else { return }
+                self.palette = palette
             }
         }
     }
