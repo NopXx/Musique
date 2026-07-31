@@ -283,7 +283,9 @@ struct ArtworkPickerView: View {
             guard let (data, _) = try? await URLSession.shared.data(from: url),
                   let img = NSImage(data: data) else { return }
             await MainActor.run {
-                viewModel.setCustomArtwork(img, for: target, sourceURL: choice.fullURL)
+                viewModel.setCustomArtwork(img, for: target, sourceURL: choice.fullURL,
+                                           animationURL: choice.animationURL,
+                                           animationTallURL: choice.animationTallURL)
                 onClose()
             }
         }

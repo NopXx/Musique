@@ -114,15 +114,12 @@ enum L10n {
     static var lockscreenShowAlbum: String { tr("แสดงชื่ออัลบั้ม", "Show album name") }
     static var lockscreenShowProgress: String { tr("แสดงแถบความคืบหน้า", "Show progress bar") }
     static var lockscreenAnimArtwork: String { tr("ใช้ animated artwork (ถ้ามี)", "Use animated artwork (if available)") }
-    static var lockscreenLiqoriaStyle: String { tr("Liqoria style (animated bg เต็มจอ + capsule)", "Liqoria style (full-screen animated bg + capsule)") }
+    static var lockscreenSystemWallpaper: String { tr("ตั้ง artwork เป็น wallpaper จริงตอนล็อกจอ — วิดีโอถ้ามี motion artwork (กู้คืนตอนปลดล็อก)", "Set artwork as the real wallpaper while locked — video when the track has motion artwork (restored on unlock)") }
     static var lockscreenAppearance: String { tr("รูปลักษณ์", "Appearance") }
     static var lockscreenBgBlur: String { tr("ความเบลอพื้นหลัง", "Background blur") }
     static var lockscreenScreenPicker: String { tr("จอที่แสดง", "Display on") }
     static var lockscreenMainOnly: String { tr("จอหลักเท่านั้น", "Main display only") }
     static var lockscreenAllScreens: String { tr("ทุกจอ", "All displays") }
-    static var lockscreenClockStyle: String { tr("สไตล์นาฬิกา (Glass)", "Clock style (Glass)") }
-    static var lockscreenClockDynamicColor: String { tr("ใช้สีตามปกหน้าปก", "Use dynamic color from artwork") }
-    static var lockscreenClockSolidColorStrength: String { tr("ความเข้มสี Solid", "Solid color strength") }
 
     // MARK: - Edit Rules
 

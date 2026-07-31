@@ -27,6 +27,9 @@ final class CustomArtworkStore {
     private struct Entry: Codable {
         let file: String
         var sourceURL: String?
+        /// Remote motion-artwork URLs when the chosen cover has an animation.
+        var animationURL: String?
+        var animationTallURL: String?
     }
 
     private let fm = FileManager.default
@@ -82,11 +85,19 @@ final class CustomArtworkStore {
         return index[Self.key(for: snap)]?.sourceURL
     }
 
+    /// Remote motion-artwork URLs stored for this track's custom cover, if any.
+    func animationURLs(for snap: NowPlayingSnapshot) -> (square: String?, tall: String?) {
+        guard localURL(for: snap) != nil else { return (nil, nil) }
+        let entry = index[Self.key(for: snap)]
+        return (entry?.animationURL, entry?.animationTallURL)
+    }
+
     /// Store a PNG-encoded copy of `image` for this track. `sourceURL` is the
     /// public URL when the image came from the artwork API, else nil. Returns
     /// the file URL.
     @discardableResult
-    func save(image: NSImage, for snap: NowPlayingSnapshot, sourceURL: String? = nil) -> URL? {
+    func save(image: NSImage, for snap: NowPlayingSnapshot, sourceURL: String? = nil,
+              animationURL: String? = nil, animationTallURL: String? = nil) -> URL? {
         guard let png = image.pngData() else { return nil }
         let key = Self.key(for: snap)
         let keyHash = Self.shortHash(key)
@@ -100,7 +111,8 @@ final class CustomArtworkStore {
             if let old = index[key]?.file, old != name {
                 try? fm.removeItem(at: dir.appendingPathComponent(old))
             }
-            index[key] = Entry(file: name, sourceURL: sourceURL)
+            index[key] = Entry(file: name, sourceURL: sourceURL,
+                               animationURL: animationURL, animationTallURL: animationTallURL)
             persistIndex()
             NotificationCenter.default.post(name: Self.didChangeNotification, object: key)
             return url

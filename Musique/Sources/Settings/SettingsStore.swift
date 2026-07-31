@@ -22,6 +22,7 @@ final class SettingsStore: ObservableObject {
             "language": "en",
             "general": [
                 "launch_at_login": false,
+                "show_in_dock": false,
             ],
             "sources": [
                 "apple_music_enabled": true,
@@ -84,7 +85,7 @@ final class SettingsStore: ObservableObject {
                 "background_style": "blurred_artwork",
                 "padding": 32,
                 "screens": "main",
-                "clock_glass_style": "regular",
+                "set_system_wallpaper": false,
             ],
         ]
     }

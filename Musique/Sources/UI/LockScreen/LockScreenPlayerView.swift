@@ -13,39 +13,66 @@ struct LockScreenPlayerView: View {
             let animURL = animationURLString.flatMap(URL.init(string:))
 
             let largeSize = min(geo.size.height * 0.40, geo.size.width * 0.38)
-            let cardWidth = viewModel.liqoriaStyle
-                ? min(260, geo.size.width * 0.22)
-                : min(350, geo.size.width * 0.35)
-            let liqoria = viewModel.liqoriaStyle
+            let cardWidth = min(350, geo.size.width * 0.35)
 
             ZStack {
-                let showLarge = !liqoria && viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
-                let showInline = liqoria || (!viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive)
-                let showClock = liqoria
-                    ? !viewModel.fullscreenAnimationActive
-                    : showLarge
+                // Crossfade layer: the outgoing desktop, shown instantly then
+                // faded to nil to mask the un-animatable real-wallpaper swap.
+                if let cf = viewModel.crossfadeImage {
+                    Image(nsImage: cf)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                        .transition(.asymmetric(insertion: .identity, removal: .opacity))
+                }
+
+                let showLarge = viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
+                let showInline = !viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
+                // Only stand down once the real desktop is *actually* playing our
+                // clip. Activation takes seconds and can fail (unwritable wallpaper
+                // store, nothing restorable to back up); trusting the setting alone
+                // left the lock screen showing no artwork at all in those cases.
+                let motionActive = viewModel.motionWallpaperLive && animURL != nil
+
+                // Motion artwork: fill the screen with the animation itself (no
+                // blur) instead of setting a still as the wallpaper. Tap-to-shrink
+                // is handled by the Color.clear layer above it.
+                // In motion-wallpaper mode the REAL desktop already plays the video,
+                // so don't draw a SkyLight copy on top — that would cover the native
+                // lock-screen clock. Keep the background clear so the real video and
+                // the native clock both show.
+                if showLarge, let animURL, !motionActive {
+                    AnimatedArtworkView(url: animURL, staticImage: viewModel.artworkImage,
+                                        contentMode: .fill, cornerRadius: 0)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                }
+
+                // Still artwork: cover the seconds WallpaperAgent takes to repaint
+                // the desktop with our own blurred copy, then fade out and let the
+                // real wallpaper (and the native clock over it) show.
+                if showLarge, animURL == nil, !viewModel.staticWallpaperLive,
+                   let image = viewModel.artworkImage {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .blur(radius: CGFloat(viewModel.backgroundBlur) / 3)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
 
                 if showLarge {
                     Color.clear
                         .contentShape(Rectangle())
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                                viewModel.isLargeArtwork = false
-                            }
-                        }
-                }
-
-                if showClock {
-                    VStack {
-                        LiquidGlassClockView(
-                            glassVariant: viewModel.clockGlassStyle,
-                            tint: clockTint(viewModel)
-                        )
-                        .padding(.top, 110)
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(.opacity)
+                        .onTapGesture { shrink() }
                 }
 
                 if let snap, snap.hasTrack {
@@ -56,11 +83,7 @@ struct LockScreenPlayerView: View {
                                 animatedURL: animURL,
                                 size: largeSize
                             )
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                                    viewModel.isLargeArtwork = false
-                                }
-                            }
+                            .onTapGesture { shrink() }
                             .transition(.scale(scale: 0.92).combined(with: .opacity))
                         }
 
@@ -74,7 +97,10 @@ struct LockScreenPlayerView: View {
                             animatedArtwork: viewModel.animatedArtwork,
                             showInlineArtwork: showInline,
                             onArtworkTap: {
-                                guard !liqoria else { return }
+                                // Enlarge — the controller reacts to `isLargeArtwork`
+                                // and turns on whichever real wallpaper (static or
+                                // motion) its setting allows. Tap is the single
+                                // activation signal for both.
                                 withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                                     viewModel.isLargeArtwork = true
                                 }
@@ -82,66 +108,27 @@ struct LockScreenPlayerView: View {
                         )
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, CGFloat(viewModel.padding) + (liqoria ? 80 : 160))
+                    .padding(.bottom, CGFloat(viewModel.padding) + 160)
                     .padding(.horizontal, CGFloat(viewModel.padding))
                 }
+
             }
+            // Fade the stand-in copy out as the real wallpaper lands, rather than
+            // cutting to it.
+            .animation(.easeInOut(duration: 0.35), value: viewModel.staticWallpaperLive)
+            .animation(.easeInOut(duration: 0.35), value: viewModel.motionWallpaperLive)
         }
         .ignoresSafeArea()
     }
 
-    private func clockTint(_ vm: LockScreenViewModel) -> Color {
-        guard vm.clockUseDynamicColor else { return .clear }
-        guard let accent = vm.palette.accent.usingColorSpace(.sRGB) else {
-            return Color(nsColor: vm.palette.accent)
+    /// Exit large mode — the inverse of the thumbnail tap. The controller reacts
+    /// to `isLargeArtwork` flipping false and restores the previous wallpaper.
+    private func shrink() {
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+            viewModel.isLargeArtwork = false
         }
-        if vm.clockGlassStyle == .solid {
-            let strength = max(0, min(1, vm.clockSolidColorStrength))
-            let r = accent.redComponent * strength + 1.0 * (1 - strength)
-            let g = accent.greenComponent * strength + 1.0 * (1 - strength)
-            let b = accent.blueComponent * strength + 1.0 * (1 - strength)
-            return Color(.sRGB, red: Double(r), green: Double(g), blue: Double(b), opacity: 1)
-        }
-        return Color(nsColor: accent)
-    }
-}
-
-private struct LiquidGlassClockView: View {
-    var glassVariant: GlassTextVariant = .regular
-    var tint: Color = .clear
-
-    @State private var now = Date()
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-
-    private var dateString: String {
-        let f = DateFormatter()
-        f.dateFormat = "EEE d MMM"
-        return f.string(from: now)
     }
 
-    private var timeString: String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return f.string(from: now)
-    }
-
-    var body: some View {
-        VStack(spacing: 8) {
-            GlassEffectText(
-                text: dateString,
-                font: NSFont.systemFont(ofSize: 32, weight: .semibold),
-                variant: glassVariant,
-                glassTint: tint
-            )
-            GlassEffectText(
-                text: timeString,
-                font: NSFont.systemFont(ofSize: 150, weight: .bold),
-                variant: glassVariant,
-                glassTint: tint
-            )
-        }
-        .onReceive(timer) { now = $0 }
-    }
 }
 
 private struct ArtworkLayer: View {
@@ -261,16 +248,22 @@ private struct LockScreenWaveBars: View {
     private let count = 10
     private let bandStride = 1
 
+    private let barW: CGFloat = 2.5
+    private let spacing: CGFloat = 2
+
+    // ponytail: single Canvas instead of 10 Capsules with per-bar implicit animation.
+    // EMA in the publisher already smooths; redraw is one pass, not 10 view diffs.
     var body: some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(0..<count, id: \.self) { i in
-                Capsule()
-                    .fill(Color.white.opacity(0.75))
-                    .frame(width: 2.5, height: barHeight(i))
-                    .animation(.easeOut(duration: 0.06), value: barHeight(i))
+        Canvas { ctx, size in
+            var x: CGFloat = 0
+            for i in 0..<count {
+                let h = barHeight(i)
+                let rect = CGRect(x: x, y: (size.height - h) / 2, width: barW, height: h)
+                ctx.fill(Capsule().path(in: rect), with: .color(.white.opacity(0.75)))
+                x += barW + spacing
             }
         }
-        .frame(height: 18)
+        .frame(width: CGFloat(count) * barW + CGFloat(count - 1) * spacing, height: 18)
         .onAppear { MusicAudioLevelMonitor.shared.start() }
     }
 

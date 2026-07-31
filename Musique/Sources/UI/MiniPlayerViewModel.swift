@@ -177,10 +177,15 @@ final class MiniPlayerViewModel: ObservableObject {
     }
 
     /// Show a custom image (a local file URL) as the current artwork and derive
-    /// its palette. Animation URLs are left nil so the static image is used.
+    /// its palette. Carries the stored motion-artwork URLs so a chosen animated
+    /// cover keeps playing; nil for a still local file.
     private func applyCustomArtwork(_ url: URL) {
         let urlStr = url.absoluteString
-        let result = ArtworkResult(artworkURL: urlStr)
+        let anim: (square: String?, tall: String?) =
+            snapshot.map { CustomArtworkStore.shared.animationURLs(for: $0) } ?? (nil, nil)
+        let result = ArtworkResult(artworkURL: urlStr,
+                                   animationURL: anim.square,
+                                   animationTallURL: anim.tall)
         artwork = result
         WidgetDataManager.shared.update(snapshot: snapshot, artwork: result, palette: palette)
         guard urlStr != lastPaletteURL else { return }
@@ -223,8 +228,10 @@ final class MiniPlayerViewModel: ObservableObject {
     /// which captures the target track when it opens so the choice lands on the
     /// right song even if playback has since advanced. `sourceURL` is the public
     /// artwork URL when picked from the API (nil for a local file).
-    func setCustomArtwork(_ image: NSImage, for snap: NowPlayingSnapshot, sourceURL: String? = nil) {
-        CustomArtworkStore.shared.save(image: image, for: snap, sourceURL: sourceURL)
+    func setCustomArtwork(_ image: NSImage, for snap: NowPlayingSnapshot, sourceURL: String? = nil,
+                          animationURL: String? = nil, animationTallURL: String? = nil) {
+        CustomArtworkStore.shared.save(image: image, for: snap, sourceURL: sourceURL,
+                                       animationURL: animationURL, animationTallURL: animationTallURL)
         if let cur = snapshot,
            CustomArtworkStore.key(for: cur) == CustomArtworkStore.key(for: snap) {
             refreshArtworkForCurrentTrack()

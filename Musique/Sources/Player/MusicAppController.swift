@@ -21,7 +21,7 @@ enum PlaybackSource: String {
 
     var sfSymbol: String {
         switch self {
-        case .appleMusic: return "music.note"
+        case .appleMusic: return "applelogo"
         case .spotify:    return "waveform"
         }
     }

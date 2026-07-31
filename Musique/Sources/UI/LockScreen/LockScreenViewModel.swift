@@ -14,13 +14,27 @@ final class LockScreenViewModel: ObservableObject {
     @Published var showAlbum: Bool = true
     @Published var showProgress: Bool = true
     @Published var animatedArtwork: Bool = true
-    @Published var liqoriaStyle: Bool = false
     @Published var backgroundBlur: Int = 60
-    @Published var backgroundStyle: LockScreenBackgroundStyle = .blurredArtwork
     @Published var padding: Int = 32
-    @Published var clockGlassStyle: GlassTextVariant = .regular
-    @Published var clockUseDynamicColor: Bool = false
-    @Published var clockSolidColorStrength: Double = 0.6
+    @Published var setSystemWallpaper: Bool = false
+
+    /// True only once the blurred artwork is *actually* the desktop picture.
+    /// `setDesktopImageURL` returns immediately but WallpaperAgent repaints
+    /// seconds later; until then the overlay shows its own copy so the swap
+    /// doesn't look stuck on the old wallpaper.
+    @Published var staticWallpaperLive: Bool = false
+
+    /// True only once the motion wallpaper is *actually* playing on the real
+    /// desktop. The overlay stops drawing its own video copy then; while this is
+    /// false — activation still running, or it failed — the copy keeps the artwork
+    /// on screen instead of leaving the lock screen bare.
+    @Published var motionWallpaperLive: Bool = false
+
+    /// The *outgoing* wallpaper image, shown full-screen at opacity 1 to mask an
+    /// instant real-desktop swap, then faded to nil to reveal the new desktop —
+    /// a crossfade over the un-animatable `setDesktopImageURL`. Driven by
+    /// `LockScreenController`.
+    @Published var crossfadeImage: NSImage?
 
     private weak var monitor: PlayerMonitor?
     private var cancellables = Set<AnyCancellable>()
@@ -53,17 +67,19 @@ final class LockScreenViewModel: ObservableObject {
         showAlbum = s.bool(["lockscreen", "show_album"])
         showProgress = s.bool(["lockscreen", "show_progress"])
         animatedArtwork = s.bool(["lockscreen", "animated_artwork"])
-        liqoriaStyle = s.bool(["lockscreen", "liqoria_style"])
         let blur = s.int(["lockscreen", "background_blur"])
         backgroundBlur = blur > 0 ? blur : 60
-        backgroundStyle = .blurredArtwork
         let pad = s.int(["lockscreen", "padding"])
         padding = pad > 0 ? pad : 32
-        let style = s.string(["lockscreen", "clock_glass_style"])
-        clockGlassStyle = GlassTextVariant(rawValue: style) ?? .regular
-        clockUseDynamicColor = s.bool(["lockscreen", "clock_use_dynamic_color"])
-        let op = s.int(["lockscreen", "clock_solid_color_strength"])
-        clockSolidColorStrength = op > 0 ? Double(op) / 100.0 : 0.6
+        setSystemWallpaper = s.bool(["lockscreen", "set_system_wallpaper"])
+    }
+
+    /// Turn the "artwork as real wallpaper" mode on/off from the on-lock card.
+    /// `merge` publishes to `SettingsStore.$data`, which drives both this view
+    /// model's `readSettings` and `LockScreenController`'s live sync.
+    func setWallpaperEnabled(_ on: Bool) {
+        guard setSystemWallpaper != on else { return }
+        SettingsStore.shared.merge(["lockscreen": ["set_system_wallpaper": on]])
     }
 
     private func handleTrackUpdate(_ snap: NowPlayingSnapshot?) {

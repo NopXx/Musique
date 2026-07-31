@@ -41,17 +41,15 @@ final class SettingsViewModel: ObservableObject {
     @Published var lockscreenShowAlbum: Bool
     @Published var lockscreenShowProgress: Bool
     @Published var lockscreenAnimatedArtwork: Bool
-    @Published var lockscreenLiqoriaStyle: Bool
     @Published var lockscreenBackgroundBlur: Double
     @Published var lockscreenBackgroundStyle: String
     @Published var lockscreenPadding: Int
     @Published var lockscreenScreens: String
-    @Published var lockscreenClockGlassStyle: String
-    @Published var lockscreenClockUseDynamicColor: Bool
-    @Published var lockscreenClockSolidColorStrength: Double
+    @Published var lockscreenSetSystemWallpaper: Bool
 
     @Published var language: String
     @Published var launchAtLogin: Bool
+    @Published var showInDock: Bool
 
     @Published var debugServerEnabled: Bool
     @Published var debugServerPort: Int
@@ -106,7 +104,6 @@ final class SettingsViewModel: ObservableObject {
         self.lockscreenShowAlbum = store.bool(["lockscreen", "show_album"])
         self.lockscreenShowProgress = store.bool(["lockscreen", "show_progress"])
         self.lockscreenAnimatedArtwork = store.bool(["lockscreen", "animated_artwork"])
-        self.lockscreenLiqoriaStyle = store.bool(["lockscreen", "liqoria_style"])
         let blur = store.int(["lockscreen", "background_blur"])
         self.lockscreenBackgroundBlur = Double(blur > 0 ? blur : 60)
         let bgStyle = store.string(["lockscreen", "background_style"])
@@ -115,11 +112,7 @@ final class SettingsViewModel: ObservableObject {
         self.lockscreenPadding = pad > 0 ? pad : 32
         let scr = store.string(["lockscreen", "screens"])
         self.lockscreenScreens = scr.isEmpty ? "main" : scr
-        let clockStyle = store.string(["lockscreen", "clock_glass_style"])
-        self.lockscreenClockGlassStyle = clockStyle.isEmpty ? "regular" : clockStyle
-        self.lockscreenClockUseDynamicColor = store.bool(["lockscreen", "clock_use_dynamic_color"])
-        let op = store.int(["lockscreen", "clock_solid_color_strength"])
-        self.lockscreenClockSolidColorStrength = op > 0 ? Double(op) : 60
+        self.lockscreenSetSystemWallpaper = store.bool(["lockscreen", "set_system_wallpaper"])
 
         let lang = store.string(["language"])
         self.language = lang.isEmpty ? "th" : lang
@@ -129,6 +122,7 @@ final class SettingsViewModel: ObservableObject {
         if store.bool(["general", "launch_at_login"]) != systemLaunchAtLogin {
             store.merge(["general": ["launch_at_login": systemLaunchAtLogin]])
         }
+        self.showInDock = store.bool(["general", "show_in_dock"])
 
         self.debugServerEnabled = store.bool(["debug", "server_enabled"])
         let dport = store.int(["debug", "server_port"])
@@ -327,14 +321,11 @@ final class SettingsViewModel: ObservableObject {
             "show_album": lockscreenShowAlbum,
             "show_progress": lockscreenShowProgress,
             "animated_artwork": lockscreenAnimatedArtwork,
-            "liqoria_style": lockscreenLiqoriaStyle,
             "background_blur": Int(lockscreenBackgroundBlur),
             "background_style": lockscreenBackgroundStyle,
             "padding": lockscreenPadding,
             "screens": lockscreenScreens,
-            "clock_glass_style": lockscreenClockGlassStyle,
-            "clock_use_dynamic_color": lockscreenClockUseDynamicColor,
-            "clock_solid_color_strength": Int(lockscreenClockSolidColorStrength),
+            "set_system_wallpaper": lockscreenSetSystemWallpaper,
         ]])
     }
 
@@ -365,6 +356,11 @@ final class SettingsViewModel: ObservableObject {
             launchAtLogin = LaunchAtLoginService.isEnabled
         }
         store.merge(["general": ["launch_at_login": launchAtLogin]])
+    }
+
+    func saveShowInDock() {
+        store.merge(["general": ["show_in_dock": showInDock]])
+        AppDelegate.applyDockVisibility()
     }
 }
 
@@ -494,6 +490,13 @@ private struct GeneralTab: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .onChange(of: vm.launchAtLogin) { _, _ in vm.saveLaunchAtLogin() }
+                }
+
+                CardRow(label: LocalizedStringKey(L10n.tr("แสดงใน Dock", "Show in Dock"))) {
+                    Toggle("", isOn: $vm.showInDock)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .onChange(of: vm.showInDock) { _, _ in vm.saveShowInDock() }
                 }
 
                 CardRow(label: LocalizedStringKey(L10n.languageTitle)) {
@@ -1081,9 +1084,9 @@ private struct LockscreenTab: View {
                                       isOn: $vm.lockscreenAnimatedArtwork)
                         .onChange(of: vm.lockscreenAnimatedArtwork) { _, _ in vm.saveLockscreen() }
 
-                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenLiqoriaStyle),
-                                      isOn: $vm.lockscreenLiqoriaStyle)
-                        .onChange(of: vm.lockscreenLiqoriaStyle) { _, _ in vm.saveLockscreen() }
+                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenSystemWallpaper),
+                                      isOn: $vm.lockscreenSetSystemWallpaper)
+                        .onChange(of: vm.lockscreenSetSystemWallpaper) { _, _ in vm.saveLockscreen() }
                 }
 
                 SettingsCard(
@@ -1123,36 +1126,8 @@ private struct LockscreenTab: View {
                         .onChange(of: vm.lockscreenScreens) { _, _ in vm.saveLockscreen() }
                     }
 
-                    CardRow(label: LocalizedStringKey(L10n.lockscreenClockStyle)) {
-                        Picker("", selection: $vm.lockscreenClockGlassStyle) {
-                            ForEach(GlassTextVariant.allCases) { v in
-                                Text(v.displayName).tag(v.rawValue)
-                            }
-                        }
-                        .labelsHidden()
-                        .fixedSize()
-                        .onChange(of: vm.lockscreenClockGlassStyle) { _, _ in vm.saveLockscreen() }
-                    }
-
-                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenClockDynamicColor),
-                                      isOn: $vm.lockscreenClockUseDynamicColor)
-                        .onChange(of: vm.lockscreenClockUseDynamicColor) { _, _ in vm.saveLockscreen() }
-
-                    if vm.lockscreenClockGlassStyle == "solid" && vm.lockscreenClockUseDynamicColor {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(L10n.lockscreenClockSolidColorStrength).font(.subheadline)
-                                Spacer()
-                                Text("\(Int(vm.lockscreenClockSolidColorStrength))%")
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                                    .font(.caption)
-                            }
-                            Slider(value: $vm.lockscreenClockSolidColorStrength, in: 10...100, step: 5)
-                                .onChange(of: vm.lockscreenClockSolidColorStrength) { _, _ in vm.saveLockscreen() }
-                        }
-                    }
                 }
+
             }
             .disabled(!vm.lockscreenEnabled)
             .opacity(vm.lockscreenEnabled ? 1.0 : 0.45)

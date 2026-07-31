@@ -193,16 +193,22 @@ private struct WaveBarsView: View {
     let isPlaying: Bool
     private let count = 7
 
+    private let barW: CGFloat = 2
+    private let spacing: CGFloat = 1.5
+
+    // ponytail: single Canvas instead of 7 Capsules with per-bar implicit animation.
+    // EMA in the publisher already smooths; redraw is one pass, not 7 view diffs.
     var body: some View {
-        HStack(alignment: .center, spacing: 1.5) {
-            ForEach(0..<count, id: \.self) { i in
-                Capsule()
-                    .fill(Color.primary)
-                    .frame(width: 2, height: barHeight(i))
-                    .animation(.easeOut(duration: 0.05), value: barHeight(i))
+        Canvas { ctx, size in
+            var x: CGFloat = 0
+            for i in 0..<count {
+                let h = barHeight(i)
+                let rect = CGRect(x: x, y: (size.height - h) / 2, width: barW, height: h)
+                ctx.fill(Capsule().path(in: rect), with: .color(.primary))
+                x += barW + spacing
             }
         }
-        .frame(height: 11)
+        .frame(width: CGFloat(count) * barW + CGFloat(count - 1) * spacing, height: 11)
     }
 
     private func barHeight(_ i: Int) -> CGFloat {

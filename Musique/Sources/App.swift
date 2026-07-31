@@ -21,8 +21,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let nowPlaying = NowPlayingService()
     private(set) var settingsWindow = SettingsWindowController()
 
+    /// Show or hide the Dock icon. The app ships as `LSUIElement`, which also
+    /// keeps it out of the Force Quit list and the app switcher; `.regular` puts
+    /// it in all three. Safe to call repeatedly — setting the policy it already
+    /// has is a no-op.
+    static func applyDockVisibility() {
+        let showInDock = SettingsStore.shared.bool(["general", "show_in_dock"])
+        NSApp.setActivationPolicy(showInDock ? .regular : .accessory)
+        // Becoming .regular from an agent doesn't bring the app forward on its
+        // own, which leaves the new Dock icon looking inert until it's clicked.
+        if showInDock { NSApp.activate() }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
+        AppDelegate.applyDockVisibility()
         scrobbler.attach(monitor: playerMonitor)
         nowPlaying.attach(monitor: playerMonitor)
         NotificationService.shared.attach(monitor: playerMonitor, scrobbler: scrobbler)
