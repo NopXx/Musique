@@ -33,6 +33,8 @@ targets:
       properties:
         LSUIElement: true
         CFBundleDisplayName: Musique
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleIconName: AppIcon
         NSAppleEventsUsageDescription: Musique needs permission to control Apple Music and Spotify to read playback state and send play/pause commands.
         NSAppleMusicUsageDescription: Musique reads the currently playing track info from Apple Music.
@@ -76,6 +78,8 @@ targets:
       path: MusiqueWidget/Info.plist
       properties:
         CFBundleDisplayName: Musique Widget
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
@@ -100,6 +104,8 @@ targets:
       path: MusiqueWallpaper/Info.plist
       properties:
         CFBundleDisplayName: Musique Motion Wallpaper
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundlePackageType: XPC!
         LSMinimumSystemVersion: '26.0'
         EXAppExtensionAttributes:
