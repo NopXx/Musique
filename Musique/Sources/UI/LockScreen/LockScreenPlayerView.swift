@@ -37,14 +37,14 @@ struct LockScreenPlayerView: View {
                 // left the lock screen showing no artwork at all in those cases.
                 let motionActive = viewModel.motionWallpaperLive && animURL != nil
 
-                // Motion artwork: fill the screen with the animation itself (no
-                // blur) instead of setting a still as the wallpaper. Tap-to-shrink
-                // is handled by the Color.clear layer above it.
-                // In motion-wallpaper mode the REAL desktop already plays the video,
-                // so don't draw a SkyLight copy on top — that would cover the native
-                // lock-screen clock. Keep the background clear so the real video and
-                // the native clock both show.
-                if showLarge, let animURL, !motionActive {
+                // Whether the desktop is showing artwork of ours yet — the still
+                // goes up first even for a motion track, the video takes over when
+                // it's really playing.
+                let desktopHasArtwork = viewModel.staticWallpaperLive || motionActive
+                // With the wallpaper feature off nothing will ever put the artwork
+                // on the desktop, so an enlarged motion track has to be drawn here
+                // — the one case where we still paint a video over the native clock.
+                if showLarge, let animURL, !viewModel.setSystemWallpaper {
                     AnimatedArtworkView(url: animURL, staticImage: viewModel.artworkImage,
                                         contentMode: .fill, cornerRadius: 0)
                         .frame(width: geo.size.width, height: geo.size.height)
@@ -53,10 +53,11 @@ struct LockScreenPlayerView: View {
                         .transition(.opacity)
                 }
 
-                // Still artwork: cover the seconds WallpaperAgent takes to repaint
-                // the desktop with our own blurred copy, then fade out and let the
-                // real wallpaper (and the native clock over it) show.
-                if showLarge, animURL == nil, !viewModel.staticWallpaperLive,
+                // Until then, present a motion track exactly like a still one: the
+                // blurred cover behind the enlarged artwork. Drawing our own copy of
+                // the video for the two or three seconds the swap takes made the
+                // enlarge look like a different feature, and covered the clock.
+                if showLarge, !desktopHasArtwork, viewModel.setSystemWallpaper,
                    let image = viewModel.artworkImage {
                     Image(nsImage: image)
                         .resizable()
@@ -77,10 +78,14 @@ struct LockScreenPlayerView: View {
 
                 if let snap, snap.hasTrack {
                     VStack(spacing: 20) {
-                        if showLarge && animURL == nil {
+                        // The enlarged cover, shown while the desktop isn't carrying
+                        // the artwork itself. Deliberately the still even for a
+                        // motion track: the video belongs on the desktop, and this
+                        // is what's on screen until it gets there.
+                        if showLarge, !motionActive, !viewModel.staticWallpaperLive {
                             ArtworkLayer(
                                 artworkImage: viewModel.artworkImage,
-                                animatedURL: animURL,
+                                animatedURL: viewModel.setSystemWallpaper ? nil : animURL,
                                 size: largeSize
                             )
                             .onTapGesture { shrink() }

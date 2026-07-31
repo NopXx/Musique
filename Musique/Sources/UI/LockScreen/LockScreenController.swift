@@ -11,6 +11,9 @@ final class LockScreenController {
     private let playerMonitor: PlayerMonitor
     private let viewModel: LockScreenViewModel
     private var playerWindows: [LockScreenWindow] = []
+    /// Stand-ins over the screens the overlay doesn't cover, shown only while a
+    /// wallpaper-store rewrite has WallpaperAgent killed. See `setDesktopFiller`.
+    private var fillerWindows: [LockScreenWindow] = []
     private var cancellables = Set<AnyCancellable>()
     private var isLocked = false
     /// The screen saver runs above everything, including the lock UI and our
@@ -41,6 +44,9 @@ final class LockScreenController {
         }
         SystemWallpaperOperator.shared.onLiveChange = { [weak viewModel] live in
             viewModel?.staticWallpaperLive = live
+        }
+        motionWallpaper.onStoreBusyChange = { [weak self] busy in
+            self?.setDesktopFiller(busy)
         }
         // A motion restore paints the user's own wallpaper back. If we still want
         // artwork up there — next track has a still, screen still locked — claim
@@ -364,7 +370,55 @@ final class LockScreenController {
         }
     }
 
+    /// Hold each screen's current desktop picture in front of it while the
+    /// wallpaper store is being rewritten. That rewrite kills WallpaperAgent, and
+    /// until launchd brings it back nothing draws the desktop on *any* display —
+    /// which reads as every screen going black for a couple of seconds. Screens
+    /// the player overlay already covers need nothing; the rest get a still of
+    /// what they were showing, so the swap is invisible.
+    private func setDesktopFiller(_ visible: Bool) {
+        guard visible else {
+            for window in fillerWindows {
+                window.orderOut(nil)
+                window.contentView = nil
+            }
+            fillerWindows.removeAll()
+            return
+        }
+        guard isLocked, fillerWindows.isEmpty else { return }
+        // Every screen, including the ones the player overlay is on: that overlay
+        // is transparent wherever it isn't drawing the card, so the black shows
+        // straight through it — most visibly on the way *out* of full screen,
+        // where nothing of ours is covering the screen any more.
+        for screen in NSScreen.screens {
+            let window = LockScreenWindow(screen: screen)
+            let view = NSImageView(frame: NSRect(origin: .zero, size: screen.frame.size))
+            view.imageScaling = .scaleAxesIndependently
+            view.image = fillerImage(for: screen)
+            window.contentView = view
+            window.ignoresMouseEvents = true
+            SkyLightOperator.shared.promoteAboveLockScreen(window)
+            window.orderFrontRegardless()
+            fillerWindows.append(window)
+        }
+        // Fillers went up last, so put the cards back in front of them.
+        raiseAllWindows()
+        log.info("desktop filler — covering \(self.fillerWindows.count) screen(s) while the store is rewritten")
+    }
+
+    /// What to hold in front of `screen` while the desktop isn't being drawn: the
+    /// wallpaper it had before we took over (what a restore is about to put back),
+    /// else whatever the desktop currently reports, else the artwork. Anything but
+    /// nothing — the point is to not show black.
+    private func fillerImage(for screen: NSScreen) -> NSImage? {
+        let original = SystemWallpaperOperator.shared.originalWallpaper(for: screen)
+        let current = NSWorkspace.shared.desktopImageURL(for: screen)
+        return [original, current].compactMap { $0 }.compactMap { NSImage(contentsOf: $0) }.first
+            ?? viewModel.artworkImage
+    }
+
     private func dismiss() {
+        setDesktopFiller(false)
         stopRaiseLoop()
         guard !playerWindows.isEmpty else { return }
         log.info("dismiss — closing \(self.playerWindows.count) window(s)")
