@@ -281,24 +281,23 @@ final class SystemWallpaperOperator {
         let ms = Int(Date().timeIntervalSince(started) * 1000)
         let kb = (try? fm.attributesOfItem(atPath: url.path)[.size] as? Int).flatMap { $0 } ?? 0
         log.info("setDesktopImageURL — \(kb / 1024)KB in \(ms)ms")
-        waitForDesktopToLand(since: started)
+        waitForDesktopToLand(url, since: started)
     }
 
     /// `setDesktopImageURL` returns in a millisecond but WallpaperAgent takes
     /// *seconds* to repaint the desktop the lock screen shows. Report the gap so
     /// the overlay can cover it with its own copy instead of leaving the old
-    /// wallpaper on screen. WallpaperAgent rewrites the wallpaper store once the
-    /// new picture is up; poll for that, and give up (assume landed) after a cap
-    /// so a missed write can't pin our copy over the native clock forever.
-    private func waitForDesktopToLand(since started: Date) {
+    /// wallpaper on screen. WallpaperAgent records the picture in the wallpaper
+    /// store once it's up; poll for *our file* appearing there, and give up
+    /// (assume landed) after a cap so a missed write can't pin our copy over the
+    /// native clock forever.
+    private func waitForDesktopToLand(_ url: URL, since started: Date) {
         landWatch?.invalidate()
-        let before = MotionWallpaperStore.storeModified()
         let deadline = Date().addingTimeInterval(6)
         landWatch = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
                 guard let self else { timer.invalidate(); return }
-                let now = MotionWallpaperStore.storeModified()
-                let landed = now != before
+                let landed = MotionWallpaperStore.desktopShows(url)
                 guard landed || Date() > deadline else { return }
                 timer.invalidate()
                 self.landWatch = nil

@@ -54,7 +54,7 @@ Other scripts: `scripts/build-dmg.sh`, `scripts/clean-builds.sh`, `scripts/wipe-
 
 Four targets defined in [project.yml](project.yml):
 
-- **Musique** — main app. `LSUIElement=true` (menu bar agent). Entitlements: apple-events, network.client, app-group `H4M5HWBU2K.group.com.nopxx.musique` (team-ID prefixed — a non-sandboxed macOS process gets no container for the plain `group.` form), disable-library-validation (for SkyLight dlopen).
+- **Musique** — main app. `LSUIElement=true` (menu bar agent). Entitlements: apple-events, network.client, app-group `AppGroup.id` (team-ID prefixed — a non-sandboxed macOS process gets no container for the plain `group.` form), disable-library-validation (for SkyLight dlopen).
 - **MusiqueWidget** — WidgetKit app extension. Sandboxed. Shares app-group JSON.
 - **MusiqueWallpaper** — `com.apple.wallpaper` ExtensionKit appex, embedded in `Contents/Extensions`. Sandboxed; plays the staged motion-artwork clip as the real desktop wallpaper. Talks to WallpaperAgent over NSXPC using hand-declared protocols, with `WallpaperExtensionKit` (private, no Swift module) `dlopen`ed at launch so its ObjC wire classes resolve by name.
 - **MusiqueTests** — unit test bundle.
@@ -132,6 +132,9 @@ Musique/Sources/
 MusiqueWallpaper/  the appex — MusiqueWallpaperExtension (@main),
                    WallpaperXPCHandler, VideoRenderer, WallpaperState,
                    WallpaperPaths (must match MotionWallpaperStore's paths)
+
+Shared/            AppGroup — the group identifier, compiled into all three
+                   targets (entitlements repeat it via a YAML anchor)
 ```
 
 ## User data

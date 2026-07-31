@@ -6,11 +6,8 @@ import Foundation
 /// prefixed because the host is *not* sandboxed and macOS resolves a container for
 /// such a process only in that form. Must match `MotionWallpaperStore.videosDir`.
 enum WallpaperPaths {
-    static let appGroupID = "H4M5HWBU2K.group.com.nopxx.musique"
-
     static var videosDir: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
-            .appendingPathComponent("videos", isDirectory: true)
+        AppGroup.containerURL?.appendingPathComponent("videos", isDirectory: true)
     }
 
     /// Names the clip the host most recently staged. Must match
