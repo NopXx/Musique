@@ -41,18 +41,11 @@ final class SettingsViewModel: ObservableObject {
     @Published var lockscreenShowAlbum: Bool
     @Published var lockscreenShowProgress: Bool
     @Published var lockscreenAnimatedArtwork: Bool
-    @Published var lockscreenLiqoriaStyle: Bool
     @Published var lockscreenBackgroundBlur: Double
     @Published var lockscreenBackgroundStyle: String
     @Published var lockscreenPadding: Int
     @Published var lockscreenScreens: String
-    @Published var lockscreenClockGlassStyle: String
     @Published var lockscreenSetSystemWallpaper: Bool
-    @Published var lockscreenDesktopAnimatedWallpaper: Bool
-    @Published var lockscreenClockUseDynamicColor: Bool
-    @Published var lockscreenClockSolidColorStrength: Double
-    @Published var lockscreenSkyLevel: Int
-    @Published var lockscreenSkyLevelTest: Bool
 
     @Published var language: String
     @Published var launchAtLogin: Bool
@@ -111,7 +104,6 @@ final class SettingsViewModel: ObservableObject {
         self.lockscreenShowAlbum = store.bool(["lockscreen", "show_album"])
         self.lockscreenShowProgress = store.bool(["lockscreen", "show_progress"])
         self.lockscreenAnimatedArtwork = store.bool(["lockscreen", "animated_artwork"])
-        self.lockscreenLiqoriaStyle = store.bool(["lockscreen", "liqoria_style"])
         let blur = store.int(["lockscreen", "background_blur"])
         self.lockscreenBackgroundBlur = Double(blur > 0 ? blur : 60)
         let bgStyle = store.string(["lockscreen", "background_style"])
@@ -120,16 +112,7 @@ final class SettingsViewModel: ObservableObject {
         self.lockscreenPadding = pad > 0 ? pad : 32
         let scr = store.string(["lockscreen", "screens"])
         self.lockscreenScreens = scr.isEmpty ? "main" : scr
-        let clockStyle = store.string(["lockscreen", "clock_glass_style"])
-        self.lockscreenClockGlassStyle = clockStyle.isEmpty ? "regular" : clockStyle
-        self.lockscreenClockUseDynamicColor = store.bool(["lockscreen", "clock_use_dynamic_color"])
-        let op = store.int(["lockscreen", "clock_solid_color_strength"])
-        self.lockscreenClockSolidColorStrength = op > 0 ? Double(op) : 60
         self.lockscreenSetSystemWallpaper = store.bool(["lockscreen", "set_system_wallpaper"])
-        self.lockscreenDesktopAnimatedWallpaper = store.bool(["lockscreen", "desktop_animated_wallpaper"])
-        let sky = store.int(["lockscreen", "sky_level"])
-        self.lockscreenSkyLevel = sky > 0 ? sky : 400
-        self.lockscreenSkyLevelTest = store.bool(["lockscreen", "sky_level_test"])
 
         let lang = store.string(["language"])
         self.language = lang.isEmpty ? "th" : lang
@@ -338,18 +321,11 @@ final class SettingsViewModel: ObservableObject {
             "show_album": lockscreenShowAlbum,
             "show_progress": lockscreenShowProgress,
             "animated_artwork": lockscreenAnimatedArtwork,
-            "liqoria_style": lockscreenLiqoriaStyle,
             "background_blur": Int(lockscreenBackgroundBlur),
             "background_style": lockscreenBackgroundStyle,
             "padding": lockscreenPadding,
             "screens": lockscreenScreens,
-            "clock_glass_style": lockscreenClockGlassStyle,
-            "clock_use_dynamic_color": lockscreenClockUseDynamicColor,
-            "clock_solid_color_strength": Int(lockscreenClockSolidColorStrength),
             "set_system_wallpaper": lockscreenSetSystemWallpaper,
-            "desktop_animated_wallpaper": lockscreenDesktopAnimatedWallpaper,
-            "sky_level": lockscreenSkyLevel,
-            "sky_level_test": lockscreenSkyLevelTest,
         ]])
     }
 
@@ -1108,17 +1084,9 @@ private struct LockscreenTab: View {
                                       isOn: $vm.lockscreenAnimatedArtwork)
                         .onChange(of: vm.lockscreenAnimatedArtwork) { _, _ in vm.saveLockscreen() }
 
-                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenLiqoriaStyle),
-                                      isOn: $vm.lockscreenLiqoriaStyle)
-                        .onChange(of: vm.lockscreenLiqoriaStyle) { _, _ in vm.saveLockscreen() }
-
                     SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenSystemWallpaper),
                                       isOn: $vm.lockscreenSetSystemWallpaper)
                         .onChange(of: vm.lockscreenSetSystemWallpaper) { _, _ in vm.saveLockscreen() }
-
-                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenMotionWallpaper),
-                                      isOn: $vm.lockscreenDesktopAnimatedWallpaper)
-                        .onChange(of: vm.lockscreenDesktopAnimatedWallpaper) { _, _ in vm.saveLockscreen() }
                 }
 
                 SettingsCard(
@@ -1158,69 +1126,8 @@ private struct LockscreenTab: View {
                         .onChange(of: vm.lockscreenScreens) { _, _ in vm.saveLockscreen() }
                     }
 
-                    CardRow(label: LocalizedStringKey(L10n.lockscreenClockStyle)) {
-                        Picker("", selection: $vm.lockscreenClockGlassStyle) {
-                            ForEach(GlassTextVariant.allCases) { v in
-                                Text(v.displayName).tag(v.rawValue)
-                            }
-                        }
-                        .labelsHidden()
-                        .fixedSize()
-                        .onChange(of: vm.lockscreenClockGlassStyle) { _, _ in vm.saveLockscreen() }
-                    }
-
-                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenClockDynamicColor),
-                                      isOn: $vm.lockscreenClockUseDynamicColor)
-                        .onChange(of: vm.lockscreenClockUseDynamicColor) { _, _ in vm.saveLockscreen() }
-
-                    if vm.lockscreenClockGlassStyle == "solid" && vm.lockscreenClockUseDynamicColor {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(L10n.lockscreenClockSolidColorStrength).font(.subheadline)
-                                Spacer()
-                                Text("\(Int(vm.lockscreenClockSolidColorStrength))%")
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                                    .font(.caption)
-                            }
-                            Slider(value: $vm.lockscreenClockSolidColorStrength, in: 10...100, step: 5)
-                                .onChange(of: vm.lockscreenClockSolidColorStrength) { _, _ in vm.saveLockscreen() }
-                        }
-                    }
                 }
 
-                SettingsCard(
-                    icon: "move.3d",
-                    iconTint: .teal,
-                    title: LocalizedStringKey(L10n.lockscreenPositioning)
-                ) {
-                    CardRow(label: LocalizedStringKey(L10n.lockscreenSkyLevel)) {
-                        Picker("", selection: $vm.lockscreenSkyLevel) {
-                            ForEach(SkyLightOperator.SpaceLevel.allCases) { lvl in
-                                Text(lvl.displayName).tag(Int(lvl.rawValue))
-                            }
-                        }
-                        .labelsHidden()
-                        .fixedSize()
-                        .onChange(of: vm.lockscreenSkyLevel) { _, _ in vm.saveLockscreen() }
-                    }
-
-                    Text(L10n.lockscreenSkyLevelHint)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Divider().opacity(0.4)
-
-                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenSkyLevelTest),
-                                      isOn: $vm.lockscreenSkyLevelTest)
-                        .onChange(of: vm.lockscreenSkyLevelTest) { _, _ in vm.saveLockscreen() }
-
-                    Text(L10n.lockscreenSkyLevelTestHint)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
             }
             .disabled(!vm.lockscreenEnabled)
             .opacity(vm.lockscreenEnabled ? 1.0 : 0.45)

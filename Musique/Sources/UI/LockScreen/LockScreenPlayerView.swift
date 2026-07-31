@@ -13,10 +13,7 @@ struct LockScreenPlayerView: View {
             let animURL = animationURLString.flatMap(URL.init(string:))
 
             let largeSize = min(geo.size.height * 0.40, geo.size.width * 0.38)
-            let cardWidth = viewModel.liqoriaStyle
-                ? min(260, geo.size.width * 0.22)
-                : min(350, geo.size.width * 0.35)
-            let liqoria = viewModel.liqoriaStyle
+            let cardWidth = min(350, geo.size.width * 0.35)
 
             ZStack {
                 // Crossfade layer: the outgoing desktop, shown instantly then
@@ -32,20 +29,13 @@ struct LockScreenPlayerView: View {
                         .transition(.asymmetric(insertion: .identity, removal: .opacity))
                 }
 
-                let showLarge = !liqoria && viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
-                let showInline = liqoria || (!viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive)
+                let showLarge = viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
+                let showInline = !viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
                 // Only stand down once the real desktop is *actually* playing our
                 // clip. Activation takes seconds and can fail (unwritable wallpaper
                 // store, nothing restorable to back up); trusting the setting alone
                 // left the lock screen showing no artwork at all in those cases.
                 let motionActive = viewModel.motionWallpaperLive && animURL != nil
-                // A SkyLight video copy is drawn full-screen only when a motion
-                // artwork is enlarged but the motion wallpaper is OFF — it covers the
-                // native lock-screen clock, so keep drawing our own then. Otherwise
-                // (real static/motion wallpaper, or not enlarged) the native clock
-                // shows and we hide ours.
-                let skylightVideo = showLarge && animURL != nil && !motionActive
-                let showClock = liqoria ? !viewModel.fullscreenAnimationActive : skylightVideo
 
                 // Motion artwork: fill the screen with the animation itself (no
                 // blur) instead of setting a still as the wallpaper. Tap-to-shrink
@@ -104,7 +94,6 @@ struct LockScreenPlayerView: View {
                             animatedArtwork: viewModel.animatedArtwork,
                             showInlineArtwork: showInline,
                             onArtworkTap: {
-                                guard !liqoria else { return }
                                 // Enlarge — the controller reacts to `isLargeArtwork`
                                 // and turns on whichever real wallpaper (static or
                                 // motion) its setting allows. Tap is the single
@@ -116,19 +105,15 @@ struct LockScreenPlayerView: View {
                         )
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, CGFloat(viewModel.padding) + (liqoria ? 80 : 160))
+                    .padding(.bottom, CGFloat(viewModel.padding) + 160)
                     .padding(.horizontal, CGFloat(viewModel.padding))
                 }
 
-                if viewModel.skyLevelTest {
-                    VStack {
-                        SkyLevelTestControl(viewModel: viewModel)
-                            .padding(.top, 40)
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
             }
+            // Fade the stand-in copy out as the real wallpaper lands, rather than
+            // cutting to it.
+            .animation(.easeInOut(duration: 0.35), value: viewModel.staticWallpaperLive)
+            .animation(.easeInOut(duration: 0.35), value: viewModel.motionWallpaperLive)
         }
         .ignoresSafeArea()
     }
@@ -141,95 +126,6 @@ struct LockScreenPlayerView: View {
         }
     }
 
-    private func clockTint(_ vm: LockScreenViewModel) -> Color {
-        guard vm.clockUseDynamicColor else { return .clear }
-        guard let accent = vm.palette.accent.usingColorSpace(.sRGB) else {
-            return Color(nsColor: vm.palette.accent)
-        }
-        if vm.clockGlassStyle == .solid {
-            let strength = max(0, min(1, vm.clockSolidColorStrength))
-            let r = accent.redComponent * strength + 1.0 * (1 - strength)
-            let g = accent.greenComponent * strength + 1.0 * (1 - strength)
-            let b = accent.blueComponent * strength + 1.0 * (1 - strength)
-            return Color(.sRGB, red: Double(r), green: Double(g), blue: Double(b), opacity: 1)
-        }
-        return Color(nsColor: accent)
-    }
-}
-
-/// On-lock affordance to change the SkyLight layer level live while the screen
-/// is locked — the only place you can actually see the layering take effect.
-/// Gated behind the `sky_level_test` setting.
-private struct SkyLevelTestControl: View {
-    @ObservedObject var viewModel: LockScreenViewModel
-
-    private var levelName: String {
-        SkyLightOperator.SpaceLevel(rawValue: Int32(viewModel.skyLevel))?.displayName
-            ?? "\(viewModel.skyLevel)"
-    }
-
-    var body: some View {
-        HStack(spacing: 14) {
-            button("chevron.left") { viewModel.cycleSkyLevel(forward: false) }
-            VStack(spacing: 1) {
-                Text("Layer").font(.system(size: 9, weight: .semibold)).opacity(0.6)
-                Text(levelName).font(.system(size: 12, weight: .bold)).monospacedDigit()
-            }
-            .frame(minWidth: 150)
-            button("chevron.right") { viewModel.cycleSkyLevel(forward: true) }
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Capsule().fill(.black.opacity(0.55)))
-        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
-    }
-
-    private func button(_ symbol: String, _ action: @escaping () -> Void) -> some View {
-        Image(systemName: symbol)
-            .font(.system(size: 16, weight: .bold))
-            .frame(width: 32, height: 32)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: action)
-    }
-}
-
-private struct LiquidGlassClockView: View {
-    var glassVariant: GlassTextVariant = .regular
-    var tint: Color = .clear
-
-    @State private var now = Date()
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-
-    private var dateString: String {
-        let f = DateFormatter()
-        f.dateFormat = "EEE d MMM"
-        return f.string(from: now)
-    }
-
-    private var timeString: String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return f.string(from: now)
-    }
-
-    var body: some View {
-        VStack(spacing: 8) {
-            GlassEffectText(
-                text: dateString,
-                font: NSFont.systemFont(ofSize: 32, weight: .semibold),
-                variant: glassVariant,
-                glassTint: tint
-            )
-            GlassEffectText(
-                text: timeString,
-                font: NSFont.systemFont(ofSize: 150, weight: .bold),
-                variant: glassVariant,
-                glassTint: tint
-            )
-        }
-        .onReceive(timer) { now = $0 }
-    }
 }
 
 private struct ArtworkLayer: View {

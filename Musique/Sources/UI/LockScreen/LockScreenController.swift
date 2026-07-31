@@ -10,7 +10,6 @@ final class LockScreenController {
     private let log = Logger(subsystem: "com.nopxx.musique", category: "LockScreen")
     private let playerMonitor: PlayerMonitor
     private let viewModel: LockScreenViewModel
-    private var backgroundWindows: [LockScreenBackgroundWindow] = []
     private var playerWindows: [LockScreenWindow] = []
     private var cancellables = Set<AnyCancellable>()
     private var isLocked = false
@@ -78,7 +77,6 @@ final class LockScreenController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                self.applySkyLevel()
                 let mode = SettingsStore.shared.bool(["lockscreen", "set_system_wallpaper"])
                 let flipped = self.isLocked && mode != self.lastWallpaperMode
                 // On an on/off flip, capture the current desktop as the outgoing
@@ -317,30 +315,11 @@ final class LockScreenController {
         }
     }
 
-    /// Push the user-chosen SkyLight space level. Live: re-composites any
-    /// currently-attached overlay window without a rebuild.
-    private func applySkyLevel() {
-        let lvl = SettingsStore.shared.int(["lockscreen", "sky_level"])
-        SkyLightOperator.shared.setBackgroundLevel(lvl > 0 ? Int32(lvl) : 400)
-    }
-
     private func present() {
         let targets = targetScreens()
-        // Always attach the background window; `ArtworkLockScreenView.shouldShow`
-        // keeps it transparent in system-wallpaper mode (real desktop shows
-        // through) and fades it in otherwise. Attaching it unconditionally means
-        // toggling the mode live needs no window rebuild.
+        // One SkyLight window per screen — the player view hosts everything.
         log.info("present — \(targets.count) screen(s)")
         for screen in targets {
-            let bgWindow = LockScreenBackgroundWindow(screen: screen)
-            let bgHost = NSHostingController(rootView: ArtworkLockScreenView(viewModel: viewModel))
-            bgHost.view.frame = NSRect(origin: .zero, size: screen.frame.size)
-            bgWindow.contentViewController = bgHost
-            bgWindow.setFrame(screen.frame, display: true)
-            SkyLightOperator.shared.promoteBackground(bgWindow)
-            bgWindow.makeKeyAndOrderFront(nil)
-            backgroundWindows.append(bgWindow)
-
             let playerWindow = LockScreenWindow(screen: screen)
             let playerHost = NSHostingController(rootView: LockScreenPlayerView(viewModel: viewModel))
             playerHost.view.frame = NSRect(origin: .zero, size: screen.frame.size)
@@ -356,17 +335,12 @@ final class LockScreenController {
 
     private func dismiss() {
         stopRaiseLoop()
-        guard !backgroundWindows.isEmpty || !playerWindows.isEmpty else { return }
-        log.info("dismiss — closing \(self.backgroundWindows.count + self.playerWindows.count) window(s)")
-        for window in backgroundWindows {
-            window.orderOut(nil)
-            window.contentViewController = nil
-        }
+        guard !playerWindows.isEmpty else { return }
+        log.info("dismiss — closing \(self.playerWindows.count) window(s)")
         for window in playerWindows {
             window.orderOut(nil)
             window.contentViewController = nil
         }
-        backgroundWindows.removeAll()
         playerWindows.removeAll()
     }
 
@@ -375,10 +349,6 @@ final class LockScreenController {
     /// can cover our window. Calling `orderFrontRegardless` again pushes us
     /// back on top.
     private func raiseAllWindows() {
-        for window in backgroundWindows {
-            window.orderFrontRegardless()
-            SkyLightOperator.shared.promoteBackground(window)
-        }
         for window in playerWindows {
             window.orderFrontRegardless()
             SkyLightOperator.shared.promoteAboveLockScreen(window)

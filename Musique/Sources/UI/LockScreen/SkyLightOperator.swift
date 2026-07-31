@@ -12,31 +12,10 @@ import os
 final class SkyLightOperator {
     static let shared = SkyLightOperator()
 
-    /// Absolute levels exported by SkyLight. Larger = on top.
-    enum SpaceLevel: Int32, CaseIterable, Identifiable {
-        case `default` = 0
-        case setupAssistant = 100
-        case securityAgent = 200
-        case screenLock = 300
-        case notificationCenterAtScreenLock = 400
-        case bootProgress = 500
-        case voiceOver = 600
-
-        var id: Int32 { rawValue }
-
-        /// Short human label describing what the overlay sits above at this level.
-        var displayName: String {
-            switch self {
-            case .default:                      return "Default (0)"
-            case .setupAssistant:               return "Above Setup Assistant (100)"
-            case .securityAgent:                return "Above Security Agent (200)"
-            case .screenLock:                   return "Above Screen Lock (300)"
-            case .notificationCenterAtScreenLock: return "Above Lock Widgets (400)"
-            case .bootProgress:                 return "Above Boot Progress (500)"
-            case .voiceOver:                    return "Above VoiceOver (600)"
-            }
-        }
-    }
+    /// Absolute SkyLight level the player space is pinned at. Other exported
+    /// levels, for reference: 0 default, 100 setup assistant, 200 security agent,
+    /// 300 screen lock, 500 boot progress, 600 VoiceOver — larger = on top.
+    private static let notificationCenterAtScreenLock: Int32 = 400
 
     private let log = Logger(subsystem: "com.nopxx.musique", category: "SkyLight")
 
@@ -59,10 +38,10 @@ final class SkyLightOperator {
     private let SLSSpaceAddWindowsAndRemoveFromSpaces: FnAddWindowsAndRemove
 
     private let connection: Int32
-    /// Player/clock/controls — fixed above the lock UI so they never vanish.
+    /// Player card/clock/controls — fixed above the lock UI so they never vanish.
+    /// The only space we keep; everything else on the lock screen is either the
+    /// real wallpaper (motion/static) or drawn inside this same window.
     private let space: Int32
-    /// Background artwork only — level is user-adjustable for testing.
-    private let bgSpace: Int32
     let isAvailable: Bool
 
     private init() {
@@ -91,7 +70,6 @@ final class SkyLightOperator {
             SLSSpaceAddWindowsAndRemoveFromSpaces = { _, _, _, _ in 0 }
             connection = 0
             space = 0
-            bgSpace = 0
             isAvailable = false
             logger.error("SkyLight unavailable — lock screen promotion disabled")
             return
@@ -106,32 +84,16 @@ final class SkyLightOperator {
         connection = mainConn()
         // (cid, one=1, zero=0) — magic values from WindowServer reverse-engineering
         space = spcCreate(connection, 1, 0)
-        bgSpace = spcCreate(connection, 1, 0)
         // Player space is pinned above macOS's NotificationCenterAtScreenLock
         // layer so the card/controls always composite over system widgets.
-        _ = spcSetLevel(connection, space, SpaceLevel.notificationCenterAtScreenLock.rawValue)
-        // Background space starts at the user-chosen level (only the bg follows it).
-        let initial = SettingsStore.shared.int(["lockscreen", "sky_level"])
-        let bgLevel = initial > 0 ? Int32(initial) : SpaceLevel.notificationCenterAtScreenLock.rawValue
-        _ = spcSetLevel(connection, bgSpace, bgLevel)
-        _ = showSpc(connection, [space, bgSpace] as CFArray)
+        _ = spcSetLevel(connection, space, Self.notificationCenterAtScreenLock)
+        _ = showSpc(connection, [space] as CFArray)
         isAvailable = true
         logger.info("SkyLight init OK — connection:\(self.connection) space:\(self.space)")
     }
 
-    /// Re-pin the background space at `level`. Applies live to the attached
-    /// background window without a rebuild; the player space stays fixed.
-    func setBackgroundLevel(_ level: Int32) {
-        guard isAvailable else { return }
-        _ = SLSSpaceSetAbsoluteLevel(connection, bgSpace, level)
-        _ = SLSShowSpaces(connection, [space, bgSpace] as CFArray)
-    }
-
     /// Attach `window` to the player space (fixed above the lock UI). Idempotent.
     func promoteAboveLockScreen(_ window: NSWindow) { attach(window, to: space) }
-
-    /// Attach `window` to the background space (user-adjustable level). Idempotent.
-    func promoteBackground(_ window: NSWindow) { attach(window, to: bgSpace) }
 
     private func attach(_ window: NSWindow, to targetSpace: Int32) {
         guard isAvailable else { return }
