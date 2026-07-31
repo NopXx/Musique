@@ -27,7 +27,17 @@ final class EditHistoryService: ObservableObject {
                             artistTo: artistTo.trimmingCharacters(in: .whitespaces),
                             trackTo: trackTo.trimmingCharacters(in: .whitespaces),
                             albumTo: albumTo.trimmingCharacters(in: .whitespaces))
-        _ = await HistoryStore.shared.addEditRule(rule)
+        // Replace, don't stack: rules are applied oldest-first, so an earlier
+        // rule for the same track would shadow this one and every edit after the
+        // first would look like it didn't save.
+        await HistoryStore.shared.deleteEditRules(artistMatch: rule.artistMatch,
+                                                  trackMatch: rule.trackMatch,
+                                                  albumMatch: rule.albumMatch)
+        // Nothing left to rewrite — the user put the player's own metadata back,
+        // so the rule is gone rather than replaced by one that changes nothing.
+        if !rule.isNoOp {
+            _ = await HistoryStore.shared.addEditRule(rule)
+        }
         await reload()
     }
 
