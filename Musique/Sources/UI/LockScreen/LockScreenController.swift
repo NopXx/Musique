@@ -291,10 +291,12 @@ final class LockScreenController {
     /// instant. Runs regardless of the toggle — it only writes a file, never
     /// touches the live desktop.
     private func prewarmWallpaper() {
-        // No toggle check on purpose: this only writes a file. It used to skip
-        // when the feature was *on* — exactly backwards — so the tap paid for the
-        // whole blur+encode and the wallpaper landed seconds late.
+        // Runs while the feature is *on* — it used to be guarded on the toggle
+        // being off, exactly backwards, so the tap paid for the whole blur+encode
+        // and the wallpaper landed seconds late. With it off nothing ever reaches
+        // the desktop, so there is nothing to warm.
         guard isLocked,
+              SettingsStore.shared.bool(["lockscreen", "set_system_wallpaper"]),
               playerMonitor.snapshot?.hasTrack == true,
               let image = viewModel.artworkImage else { return }
         let blur = SettingsStore.shared.int(["lockscreen", "background_blur"])

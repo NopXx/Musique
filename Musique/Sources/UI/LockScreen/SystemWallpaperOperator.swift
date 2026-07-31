@@ -236,7 +236,10 @@ final class SystemWallpaperOperator {
     private func captureOriginalsIfNeeded() -> Bool {
         guard savedURLs.isEmpty else { return true }
         var captured: [CGDirectDisplayID: URL] = [:]
-        for screen in NSScreen.screens {
+        // Only the screens we're about to change: restore writes back whatever it
+        // captured, and rewriting an untouched display would replace its
+        // current-Space wallpaper with the one AppKit reports for it.
+        for screen in targetScreens {
             guard let id = displayID(screen),
                   let url = NSWorkspace.shared.desktopImageURL(for: screen) else { continue }
             guard !isOurArtwork(url) else {
