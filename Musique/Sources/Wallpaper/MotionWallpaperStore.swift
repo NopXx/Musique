@@ -42,8 +42,7 @@ enum MotionWallpaperStore {
     /// wallpaper silently stopped staging anything at all. Must match
     /// `WallpaperPaths.videosDir`.
     private static var videosDir: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
-            .appendingPathComponent("videos", isDirectory: true)
+        AppGroup.containerURL?.appendingPathComponent("videos", isDirectory: true)
     }
 
     /// Content id for a source file = hash of its path, used only to dedup "same
@@ -271,18 +270,35 @@ enum MotionWallpaperStore {
         guard url.isFileURL else { return false }
         let path = url.standardizedFileURL.path
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        if let group = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
-            .standardizedFileURL.path, path.hasPrefix(group + "/") { return true }
+        if let group = AppGroup.containerURL?.standardizedFileURL.path,
+           path.hasPrefix(group + "/") { return true }
         return path.hasPrefix(home + "/Library/Application Support/Musique/")
             || path.hasPrefix(home + "/Library/Containers/\(extensionBundleID)/")
     }
 
-    /// When WallpaperAgent last rewrote the wallpaper store. It persists there
-    /// *after* actually applying a new desktop picture, so a bump is the signal
-    /// that a `setDesktopImageURL` has landed on screen.
-    static func storeModified() -> Date? {
-        try? FileManager.default.attributesOfItem(atPath: storeURL.path)[.modificationDate] as? Date
+    /// True once the wallpaper store records `url` as a Desktop image — which
+    /// WallpaperAgent writes after the picture is actually up, so it answers
+    /// "has our `setDesktopImageURL` landed on screen yet?".
+    ///
+    /// Matching the file beats watching the store's mtime: our own motion
+    /// activation rewrites the same file, and a bump from that would have been
+    /// read as the still having landed.
+    static func desktopShows(_ url: URL) -> Bool {
+        guard let root = readStore() else { return false }
+        return desktopImageURLs(in: root).contains(url.standardizedFileURL)
+    }
+
+    /// Every image a `Desktop` node currently points at.
+    static func desktopImageURLs(in node: [String: Any]) -> Set<URL> {
+        var out: Set<URL> = []
+        if let desktop = node["Desktop"] as? [String: Any], let content = desktop["Content"],
+           let url = imageURL(fromContent: content) {
+            out.insert(url.standardizedFileURL)
+        }
+        for (key, value) in node where key != "Desktop" && key != "Idle" {
+            if let child = value as? [String: Any] { out.formUnion(desktopImageURLs(in: child)) }
+        }
+        return out
     }
 
     /// Set the desktop image through AppKit for every screen, which is the only

@@ -189,4 +189,23 @@ final class MusiqueTests: XCTestCase {
         XCTAssertEqual(provider(["AllSpacesAndDisplays", "Desktop"]), "com.apple.wallpaper.choice.image")
         XCTAssertEqual(provider(["Spaces", "S1", "Default", "Desktop"]), "com.apple.wallpaper.choice.image")
     }
+
+    /// "Has the wallpaper landed" is answered by finding our own file recorded as
+    /// a Desktop image — Idle nodes and other pictures must not count.
+    func testDesktopImageURLsSeesOnlyDesktopNodes() throws {
+        func content(_ path: String) throws -> [String: Any] {
+            let cfg = try PropertyListSerialization.data(
+                fromPropertyList: ["type": "imageFile", "url": ["relative": "file://" + path]],
+                format: .binary, options: 0)
+            return ["Choices": [["Provider": "com.apple.wallpaper.choice.image", "Configuration": cfg]]]
+        }
+        let store: [String: Any] = [
+            "Displays": ["d1": [
+                "Desktop": ["Content": try content("/tmp/ours.jpg")],
+                "Idle": ["Content": try content("/tmp/lockscreen.jpg")],
+            ]],
+        ]
+        let found = MotionWallpaperStore.desktopImageURLs(in: store)
+        XCTAssertEqual(found, [URL(fileURLWithPath: "/tmp/ours.jpg")])
+    }
 }

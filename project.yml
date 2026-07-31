@@ -25,6 +25,7 @@ targets:
       Release: Secrets.xcconfig
     sources:
     - path: Musique/Sources
+    - path: Shared
     - path: AppIcon.icon
       type: folder
     info:
@@ -46,7 +47,7 @@ targets:
         com.apple.security.automation.apple-events: true
         com.apple.security.network.client: true
         com.apple.security.cs.disable-library-validation: true
-        com.apple.security.application-groups:
+        com.apple.security.application-groups: &appGroups
         - H4M5HWBU2K.group.com.nopxx.musique
     settings:
       base:
@@ -70,6 +71,7 @@ targets:
     platform: macOS
     sources:
     - path: MusiqueWidget
+    - path: Shared
     info:
       path: MusiqueWidget/Info.plist
       properties:
@@ -80,8 +82,7 @@ targets:
       path: MusiqueWidget/MusiqueWidget.entitlements
       properties:
         com.apple.security.app-sandbox: true
-        com.apple.security.application-groups:
-        - H4M5HWBU2K.group.com.nopxx.musique
+        com.apple.security.application-groups: *appGroups
         com.apple.security.network.client: true
         com.apple.security.files.downloaded.read-only: true
     settings:
@@ -94,6 +95,7 @@ targets:
     platform: macOS
     sources:
     - path: MusiqueWallpaper
+    - path: Shared
     info:
       path: MusiqueWallpaper/Info.plist
       properties:
@@ -106,8 +108,7 @@ targets:
       path: MusiqueWallpaper/MusiqueWallpaper.entitlements
       properties:
         com.apple.security.app-sandbox: true
-        com.apple.security.application-groups:
-        - H4M5HWBU2K.group.com.nopxx.musique
+        com.apple.security.application-groups: *appGroups
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nopxx.musique.wallpaper
