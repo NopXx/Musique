@@ -142,4 +142,20 @@ final class MusiqueTests: XCTestCase {
         XCTAssertEqual(Array(saved.keys), ["/Displays/real"])
         XCTAssertTrue(MotionWallpaperStore.hasStuckDesktop(in: store))
     }
+
+    /// Each display must get its own wallpaper back, not one image sprayed over
+    /// every screen — the display-level node wins, else the lowest per-Space node
+    /// for that display, and a display the backup never saw gets nothing.
+    func testSavedContentIsPickedPerDisplay() {
+        let saved: [String: Any] = [
+            "/Displays/D1": "d1-display",
+            "/Spaces/S2/Displays/D1": "d1-space2",
+            "/Spaces/S2/Displays/D2": "d2-space2",
+            "/Spaces/S1/Displays/D2": "d2-space1",
+            "/SystemDefault": "system",
+        ]
+        XCTAssertEqual(MotionWallpaperStore.savedContent(forDisplay: "D1", in: saved) as? String, "d1-display")
+        XCTAssertEqual(MotionWallpaperStore.savedContent(forDisplay: "D2", in: saved) as? String, "d2-space1")
+        XCTAssertNil(MotionWallpaperStore.savedContent(forDisplay: "D3", in: saved))
+    }
 }

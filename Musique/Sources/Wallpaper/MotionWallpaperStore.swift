@@ -261,31 +261,80 @@ enum MotionWallpaperStore {
         guard url.isFileURL else { return false }
         let path = url.standardizedFileURL.path
         let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if let group = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
+            .standardizedFileURL.path, path.hasPrefix(group + "/") { return true }
         return path.hasPrefix(home + "/Library/Application Support/Musique/")
             || path.hasPrefix(home + "/Library/Containers/\(extensionBundleID)/")
     }
 
+    /// When WallpaperAgent last rewrote the wallpaper store. It persists there
+    /// *after* actually applying a new desktop picture, so a bump is the signal
+    /// that a `setDesktopImageURL` has landed on screen.
+    static func storeModified() -> Date? {
+        try? FileManager.default.attributesOfItem(atPath: storeURL.path)[.modificationDate] as? Date
+    }
+
     /// Set the desktop image through AppKit for every screen, which is the only
-    /// restore that WallpaperAgent treats as authoritative. Picks the user's real
-    /// image from the backup (the system-default desktop, else any saved node),
-    /// falling back to the live store's Idle image — the same picture the lock
-    /// screen already shows. A no-op if none can be found; the Index.plist rewrite
-    /// then remains the only (weaker) restore.
+    /// restore that WallpaperAgent treats as authoritative. Each screen gets *its
+    /// own* backed-up image — the store keys Desktop nodes by display UUID, so a
+    /// setup with a different wallpaper per display comes back intact instead of
+    /// all screens being flattened to one picture. Per screen, in order: the
+    /// content saved for that display, the saved system-default desktop, then the
+    /// live store's Idle image (the picture the lock screen already shows).
+    /// Screens with no usable image are left to the Index.plist rewrite.
     private static func restoreDesktopViaAppKit(saved: [String: Any], live: [String: Any]) {
-        let content = defaultDesktopContent(saved)
-            ?? saved.values.first
+        let shared = defaultDesktopContent(saved)
+            ?? saved.keys.sorted().first.flatMap { saved[$0] }
             ?? firstIdleContent(in: live)
-        guard let content, let url = imageURL(fromContent: content) else {
-            storeLog.error("restore: no real image to hand AppKit — relying on the store rewrite only")
-            return
-        }
-        MainActor.assumeIsolated {
+        onMain {
             for screen in NSScreen.screens {
-                do { try NSWorkspace.shared.setDesktopImageURL(url, for: screen) }
-                catch { storeLog.error("restore: setDesktopImageURL failed — \(error.localizedDescription, privacy: .public)") }
+                let own = displayUUID(screen).flatMap { savedContent(forDisplay: $0, in: saved) }
+                guard let url = (own ?? shared).flatMap(imageURL(fromContent:)) else {
+                    storeLog.error("restore: no real image for a screen — relying on the store rewrite for it")
+                    continue
+                }
+                do {
+                    try NSWorkspace.shared.setDesktopImageURL(url, for: screen)
+                    storeLog.info("restore: set desktop image via AppKit — \(url.lastPathComponent, privacy: .public)")
+                } catch {
+                    storeLog.error("restore: setDesktopImageURL failed — \(error.localizedDescription, privacy: .public)")
+                }
             }
         }
-        storeLog.info("restore: set desktop image via AppKit — \(url.lastPathComponent, privacy: .public)")
+    }
+
+    /// Run `body` on the main actor, synchronously, from whichever thread we're
+    /// on — activate/deactivate now run detached, but AppKit stays main-only.
+    private static func onMain(_ body: @MainActor () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated(body)
+        } else {
+            DispatchQueue.main.sync { MainActor.assumeIsolated(body) }
+        }
+    }
+
+    /// The `Desktop` content backed up for one display. Prefers its display-level
+    /// node (`/Displays/<uuid>`, what macOS applies across Spaces) and otherwise
+    /// takes the lowest-sorted per-Space node for that display, so the choice is
+    /// stable run to run.
+    static func savedContent(forDisplay uuid: String, in saved: [String: Any]) -> Any? {
+        if let own = saved[pathKey("/Displays/\(uuid)")] { return own }
+        return saved.keys.filter { $0.hasSuffix("/Displays/\(uuid)") }.sorted().first
+            .flatMap { saved[$0] }
+    }
+
+    /// The main screen's display UUID — the takeover target when the lock screen
+    /// is set to "main display only".
+    static func mainDisplayUUID() -> String? {
+        MainActor.assumeIsolated { NSScreen.main.flatMap(displayUUID) }
+    }
+
+    /// A screen's display UUID, the identifier the wallpaper store keys nodes by.
+    private static func displayUUID(_ screen: NSScreen) -> String? {
+        guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+              let uuid = CGDisplayCreateUUIDFromDisplayID(id) else { return nil }
+        return CFUUIDCreateString(nil, uuid.takeRetainedValue()) as String
     }
 
     /// The user's real wallpaper image as macOS's own store records it, read from
