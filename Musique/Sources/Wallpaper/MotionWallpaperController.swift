@@ -23,7 +23,15 @@ final class MotionWallpaperController {
     private var failedStagingSource: URL?
     /// A detached activate/deactivate is rewriting the wallpaper store. New store
     /// work is skipped while set — the two would fight over WallpaperAgent.
-    private var storeBusy = false
+    private var storeBusy = false {
+        didSet { if storeBusy != oldValue { onStoreBusyChange?(storeBusy) } }
+    }
+
+    /// Fires as a store rewrite starts and finishes. The rewrite kills
+    /// WallpaperAgent and waits for launchd to bring it back, and while it's gone
+    /// *no* desktop is drawn on *any* display — so the lock screen has a couple of
+    /// seconds of black to cover on every screen it isn't already drawing on.
+    var onStoreBusyChange: ((Bool) -> Void)?
 
     private var enabled: Bool { SettingsStore.shared.bool(["lockscreen", "set_system_wallpaper"]) }
 

@@ -22,6 +22,13 @@ struct EditRule: Identifiable, Hashable {
     var artistTo: String
     var trackTo: String
     var albumTo: String
+
+    /// A rule that replaces nothing — every target field empty. Saving an edit
+    /// that matches the player's own metadata produces one, and storing it would
+    /// only add a row that can never change anything.
+    var isNoOp: Bool {
+        artistTo.isEmpty && trackTo.isEmpty && albumTo.isEmpty
+    }
 }
 
 struct PendingScrobble: Identifiable, Hashable {
@@ -178,6 +185,27 @@ actor HistoryStore {
             ))
         }
         return out
+    }
+
+    /// Drop every rule with the same match key, case-insensitively. Saving an
+    /// edit for a track replaces its rule instead of stacking another one behind
+    /// it: `loadEditRules` is ordered by id, `apply` takes the first match, so a
+    /// duplicate left in place would shadow every later edit of that track.
+    func deleteEditRules(artistMatch: String, trackMatch: String, albumMatch: String) {
+        guard let db else { return }
+        let sql = """
+            DELETE FROM edit_history
+            WHERE lower(artist_match) = lower(?)
+              AND lower(track_match) = lower(?)
+              AND lower(album_match) = lower(?);
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, artistMatch, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, trackMatch, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, albumMatch, -1, SQLITE_TRANSIENT)
+        sqlite3_step(stmt)
     }
 
     @discardableResult

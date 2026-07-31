@@ -208,4 +208,19 @@ final class MusiqueTests: XCTestCase {
         let found = MotionWallpaperStore.desktopImageURLs(in: store)
         XCTAssertEqual(found, [URL(fileURLWithPath: "/tmp/ours.jpg")])
     }
+
+    /// Editing a track back to the player's own metadata leaves every
+    /// replacement field empty. Such a rule can never change anything, and
+    /// storing it used to leave the *previous* rule in place behind it — which
+    /// is what made a second edit of the same track look like it hadn't saved.
+    func testRuleWithNoReplacementsIsANoOp() {
+        func rule(artist: String = "", track: String = "", album: String = "") -> EditRule {
+            EditRule(id: 1, artistMatch: "TWICE", trackMatch: "THIS IS FOR", albumMatch: "",
+                     artistTo: artist, trackTo: track, albumTo: album)
+        }
+        XCTAssertTrue(rule().isNoOp)
+        XCTAssertFalse(rule(album: "THIS IS FOR (DELUXE)").isNoOp)
+        XCTAssertFalse(rule(artist: "TWICE (2015)").isNoOp)
+        XCTAssertFalse(rule(track: "This Is For").isNoOp)
+    }
 }

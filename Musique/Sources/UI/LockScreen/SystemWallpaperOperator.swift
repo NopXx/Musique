@@ -199,6 +199,13 @@ final class SystemWallpaperOperator {
         }
     }
 
+    /// The wallpaper this screen had before we touched it, when we recorded one.
+    /// What the desktop will show again after a restore — so it's also the right
+    /// thing to hold in front of the screen while WallpaperAgent is down.
+    func originalWallpaper(for screen: NSScreen) -> URL? {
+        displayID(screen).flatMap { savedURLs[$0] }
+    }
+
     /// The motion wallpaper took the desktop over — stop tracking ours *without*
     /// putting the user's picture back, which would paint over the video. The
     /// captured originals stay, so unlock still restores.
