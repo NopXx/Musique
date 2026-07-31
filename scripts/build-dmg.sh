@@ -30,15 +30,6 @@ cd "$SCRIPT_DIR/.."
 log() { printf "\033[1;34m==>\033[0m %s\n" "$*"; }
 err() { printf "\033[1;31m!!\033[0m %s\n" "$*" >&2; }
 
-# Pull CFBundleShortVersionString from Info.plist (falls back to "dev").
-VERSION="$(plutil -extract CFBundleShortVersionString raw -o - Musique/Info.plist 2>/dev/null || echo "dev")"
-if [[ "$VERSION" == "\$(MARKETING_VERSION)" || "$VERSION" == "\$(PROJECT_VERSION)" ]]; then
-    VERSION="dev"
-fi
-
-DMG_NAME="${APP_NAME}-${VERSION}.dmg"
-DMG_PATH="${OUTPUT_DIR}/${DMG_NAME}"
-
 # --- Regenerate project ----------------------------------------------------
 
 # Inject Last.fm secrets from env vars (if provided) into Secrets.xcconfig.
@@ -93,6 +84,13 @@ if [[ ! -d "$APP_PATH" ]]; then
     err "Build succeeded but $APP_PATH was not produced."
     exit 1
 fi
+
+# Version comes from the *built* app: the source Info.plist holds
+# $(MARKETING_VERSION), which only becomes a number once Xcode has substituted it.
+VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo "dev")"
+DMG_NAME="${APP_NAME}-${VERSION}.dmg"
+DMG_PATH="${OUTPUT_DIR}/${DMG_NAME}"
+log "Packaging version $VERSION"
 
 # --- Stage -----------------------------------------------------------------
 
