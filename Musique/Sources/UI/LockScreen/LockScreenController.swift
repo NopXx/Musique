@@ -21,7 +21,7 @@ final class LockScreenController {
     private var raiseTimer: Timer?
     private var lastWallpaperKey: String?
     /// Motion (video) desktop wallpaper driver — separate opt-in from the
-    /// lock-only static `set_system_wallpaper`. Auto-swaps with the track.
+    /// static-image path in `syncWallpaper`. Auto-swaps with the track.
     private let motionWallpaper = MotionWallpaperController()
     /// Last-seen `set_system_wallpaper` value, to detect a live toggle from the
     /// on-lock card and rebuild windows (draw-own-background ⇄ desktop artwork).
@@ -38,6 +38,15 @@ final class LockScreenController {
         // ours — so a slow or failed activation doesn't leave the lock screen bare.
         motionWallpaper.onLiveChange = { [weak viewModel] live in
             viewModel?.motionWallpaperLive = live
+        }
+        SystemWallpaperOperator.shared.onLiveChange = { [weak viewModel] live in
+            viewModel?.staticWallpaperLive = live
+        }
+        // A motion restore paints the user's own wallpaper back. If we still want
+        // artwork up there — next track has a still, screen still locked — claim
+        // the desktop again now that the restore is done, not before it.
+        motionWallpaper.onRestored = { [weak self] in
+            self?.syncWallpaper(force: true)
         }
 
         let dnc = DistributedNotificationCenter.default()
@@ -119,6 +128,13 @@ final class LockScreenController {
             }
             .store(in: &cancellables)
 
+        // The still wallpaper holds the desktop until the motion one is really
+        // playing, so re-run the static path as that flips.
+        viewModel.$motionWallpaperLive
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.syncWallpaper() }
+            .store(in: &cancellables)
+
         // Both wallpapers are coupled to the thumbnail tap (enlarge state), so
         // activate/restore them as that flips.
         viewModel.$isLargeArtwork
@@ -136,7 +152,9 @@ final class LockScreenController {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 SystemWallpaperOperator.shared.restore()
-                self?.motionWallpaper.disableIfActive()
+                // Blocking on purpose: a detached restore wouldn't finish before
+                // the process dies, leaving our wallpaper behind.
+                self?.motionWallpaper.disableIfActive(blocking: true)
             }
         }
         SystemWallpaperOperator.shared.recoverIfNeeded()
@@ -196,14 +214,31 @@ final class LockScreenController {
     /// screen renders the desktop wallpaper, so we only apply the artwork while
     /// locked — otherwise it would show on the user's visible desktop — and
     /// restore it the moment the screen unlocks.
-    private func syncWallpaper() {
+    /// `force` re-applies even when the artwork hasn't changed — used after a
+    /// motion restore has painted the user's wallpaper over ours.
+    private func syncWallpaper(force: Bool = false) {
         let op = SystemWallpaperOperator.shared
-        // Tap-driven: show the static artwork as the real wallpaper only while
-        // locked AND the user has tapped the now-playing thumbnail. When the motion
-        // (video) wallpaper is the active choice, let it own the wallpaper instead
-        // of painting a still over it.
-        let motionOwnsWallpaper = SettingsStore.shared.bool(["lockscreen", "desktop_animated_wallpaper"]) && hasMotionArtwork
-        guard isLocked, viewModel.isLargeArtwork, !motionOwnsWallpaper else {
+        if force {
+            lastWallpaperKey = nil
+            // Nothing of ours is on the desktop now, so let the overlay draw its
+            // own copy again until the re-applied still actually lands.
+            op.standDown()
+        }
+        // The still goes up first even for tracks that have motion artwork: the
+        // clip has to download and WallpaperAgent has to be bounced, seconds in
+        // which the desktop would otherwise still show the user's own wallpaper.
+        // Hand the desktop over only once the video is really playing — and hand
+        // it over rather than restoring, which would paint over the video.
+        if viewModel.motionWallpaperLive {
+            if lastWallpaperKey != nil {
+                SystemWallpaperOperator.shared.standDown()
+                lastWallpaperKey = nil
+            }
+            return
+        }
+        // Tap-driven: show the artwork as the real wallpaper only while locked AND
+        // the user has tapped the now-playing thumbnail.
+        guard isLocked, viewModel.isLargeArtwork else {
             if lastWallpaperKey != nil { op.restore(); lastWallpaperKey = nil }
             return
         }
@@ -226,14 +261,6 @@ final class LockScreenController {
     /// tapped the now-playing thumbnail (`isLargeArtwork`), and restores on shrink
     /// or unlock — so entering the lock screen doesn't silently replace the
     /// wallpaper before the user asks for it.
-    /// Whether the current track has usable motion artwork (and the animated
-    /// artwork feature is on) — i.e. tapping would show a video, not a still.
-    private var hasMotionArtwork: Bool {
-        guard viewModel.animatedArtwork else { return false }
-        let s = viewModel.artwork.animationSquareUltraURL ?? viewModel.artwork.animationURL ?? viewModel.artwork.animationTallURL
-        return s?.isEmpty == false
-    }
-
     private func syncMotionWallpaper() {
         guard isLocked, viewModel.isLargeArtwork else {
             motionWallpaper.disableIfActive()
@@ -264,8 +291,10 @@ final class LockScreenController {
     /// instant. Runs regardless of the toggle — it only writes a file, never
     /// touches the live desktop.
     private func prewarmWallpaper() {
+        // No toggle check on purpose: this only writes a file. It used to skip
+        // when the feature was *on* — exactly backwards — so the tap paid for the
+        // whole blur+encode and the wallpaper landed seconds late.
         guard isLocked,
-              SettingsStore.shared.bool(["lockscreen", "set_system_wallpaper"]) == false,
               playerMonitor.snapshot?.hasTrack == true,
               let image = viewModel.artworkImage else { return }
         let blur = SettingsStore.shared.int(["lockscreen", "background_blur"])

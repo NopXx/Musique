@@ -19,6 +19,16 @@ xcodebuild -project Musique.xcodeproj -scheme Musique -configuration Debug build
 
 Or open `Musique.xcodeproj` in Xcode and Run. `postGenCommand` (`scripts/fix-icon-filetype.sh`) runs automatically after `xcodegen`.
 
+**Never build with `CODE_SIGNING_ALLOWED=NO` into the shared DerivedData.** The
+products end up ad-hoc linker-signed with the wrong bundle identifiers and no
+entitlements: the wallpaper appex stops being registered (`pluginkit -mAvvv |
+grep musique` goes empty, so the motion wallpaper can't work at all) and the
+changed signature revokes the app's TCC grants. Signing needs an Apple account
+that only Xcode has — a plain `xcodebuild` from a terminal fails with
+`No Accounts`. So: build/run in Xcode, and if a command-line build is needed for
+a compile check or tests, point it somewhere harmless with
+`-derivedDataPath /tmp/<something>`.
+
 Tests:
 ```sh
 xcodebuild -project Musique.xcodeproj -scheme Musique -destination 'platform=macOS' test
@@ -42,11 +52,16 @@ Other scripts: `scripts/build-dmg.sh`, `scripts/clean-builds.sh`, `scripts/wipe-
 
 ## Targets
 
-Three targets defined in [project.yml](project.yml):
+Four targets defined in [project.yml](project.yml):
 
 - **Musique** — main app. `LSUIElement=true` (menu bar agent). Entitlements: apple-events, network.client, app-group `H4M5HWBU2K.group.com.nopxx.musique` (team-ID prefixed — a non-sandboxed macOS process gets no container for the plain `group.` form), disable-library-validation (for SkyLight dlopen).
 - **MusiqueWidget** — WidgetKit app extension. Sandboxed. Shares app-group JSON.
+- **MusiqueWallpaper** — `com.apple.wallpaper` ExtensionKit appex, embedded in `Contents/Extensions`. Sandboxed; plays the staged motion-artwork clip as the real desktop wallpaper. Talks to WallpaperAgent over NSXPC using hand-declared protocols, with `WallpaperExtensionKit` (private, no Swift module) `dlopen`ed at launch so its ObjC wire classes resolve by name.
 - **MusiqueTests** — unit test bundle.
+
+The app group is the *only* shared filesystem between them — same identifier
+string in all three entitlements. It's what carries `nowPlaying.json` for the
+widget and the staged `videos/` for the wallpaper appex.
 
 `MusiqueSaverExtension/` exists on disk but is not yet wired into `project.yml`.
 
@@ -80,6 +95,11 @@ MusicAudioLevelMonitor ──► CATapDescription + AudioHardwareCreateProcessTa
 - **Lock screen overlay** uses SkyLight private API (`dlopen`) to pin a borderless window at level `notificationCenterAtScreenLock` (400), above the loginwindow. Multi-display supported via `screens: main | all` setting.
 - **Audio waveform** needs `NSAudioCaptureUsageDescription` and Core Audio Process Tap (macOS 14.2+).
 - **DebugServer** — opt-in loopback HTTP server (`Network.framework`, default port 8765, `127.0.0.1` only), toggled in Settings. Serves an HTML dashboard + JSON endpoints: `/api/all`, `/api/snapshot`, `/api/raw` (`?refresh=1` / `/api/raw/refresh` forces a fresh ScriptingBridge read), `/api/pending`, `/api/settings`, `/api/audio`. `@MainActor`, attached to `PlayerMonitor` at launch in `App.swift`.
+- **Motion wallpaper** (`MotionWallpaperController` + `MotionWallpaperStore`, opt-in via `lockscreen.desktop_animated_wallpaper`, live only while locked *and* the artwork is enlarged) makes the animated artwork the real desktop wallpaper: stage the clip into `<app group>/videos`, rewrite every `Desktop` node in `~/Library/Application Support/com.apple.wallpaper/Store/Index.plist` to our provider, reload WallpaperAgent. Later tracks only overwrite the staged clip + post a Darwin notification (`…wallpaper.switch`) so the appex swaps on the live surface — no reload flash.
+  - Stage through the **app group**, never the appex's own container: writing into another app's container needs the user's "access data from other apps" grant, which macOS revokes on every signature change.
+  - `pointsAtUs` counts *any* file Musique wrote (artwork stills, staged clips) as ours, not just our provider. Backing one up as the "original" is how the desktop gets stuck on a frozen artwork frame forever.
+  - Restore must go through **AppKit** (`setDesktopImageURL`) as well as the plist — WallpaperAgent re-projects its own state over a file-only rewrite. AppKit reaches only the current Space per screen; other Spaces come back via the plist rewrite and `healIfStuck()` at next launch. Per-display: each screen gets its own backed-up image, matched by display UUID (`savedContent(forDisplay:)`).
+  - The overlay draws its own copy of the video until `viewModel.motionWallpaperLive` says the desktop really is playing ours — activation takes seconds and can fail.
 - **Animated artwork** is cached to disk by `AnimatedArtworkCache` (`~/Library/Application Support/Musique/Videos/`, keyed by CryptoKit hash of the remote URL). `localURLIfCached` returns synchronously; misses download in the background — this is the workaround for the `-12860` decode error (see Known issues).
 
 ### Source layout
@@ -105,7 +125,13 @@ Musique/Sources/
                    SettingsView, AnimatedArtworkView, AnimatedArtworkCache,
                    AnimationFullscreen*
     LockScreen/    LockScreenController, SkyLightOperator, LockScreenWindow,
-                   LockScreenPlayerView
+                   LockScreenPlayerView, SystemWallpaperOperator (lock-only
+                   static artwork wallpaper)
+  Wallpaper/       MotionWallpaperController, MotionWallpaperStore
+
+MusiqueWallpaper/  the appex — MusiqueWallpaperExtension (@main),
+                   WallpaperXPCHandler, VideoRenderer, WallpaperState,
+                   WallpaperPaths (must match MotionWallpaperStore's paths)
 ```
 
 ## User data
@@ -123,6 +149,14 @@ All under `~/Library/Application Support/Musique/`:
 ## Permissions
 
 First control command triggers a macOS Apple Events prompt (one per target app — Music and/or Spotify). If denied: **System Settings → Privacy & Security → Automation → Musique → Music / Spotify**.
+
+Grants are keyed to the app's code signature, so an ad-hoc/unsigned build silently
+loses all of them; `tccutil reset All com.nopxx.musique` re-prompts for everything.
+
+Reading the app's own logs: `log` is a **zsh builtin**, so `log show …` in this
+shell errors with `too many arguments` and prints nothing useful — use
+`/usr/bin/log show --predicate 'subsystem == "com.nopxx.musique"' --last 15m --info`
+(without `--info` the `Logger.info` lines are missing).
 
 ## Known issues
 

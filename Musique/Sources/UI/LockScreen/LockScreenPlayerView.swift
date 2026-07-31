@@ -53,23 +53,26 @@ struct LockScreenPlayerView: View {
                         .transition(.opacity)
                 }
 
+                // Still artwork: cover the seconds WallpaperAgent takes to repaint
+                // the desktop with our own blurred copy, then fade out and let the
+                // real wallpaper (and the native clock over it) show.
+                if showLarge, animURL == nil, !viewModel.staticWallpaperLive,
+                   let image = viewModel.artworkImage {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .blur(radius: CGFloat(viewModel.backgroundBlur) / 3)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+
                 if showLarge {
                     Color.clear
                         .contentShape(Rectangle())
                         .onTapGesture { shrink() }
-                }
-
-                if showClock {
-                    VStack {
-                        LiquidGlassClockView(
-                            glassVariant: viewModel.clockGlassStyle,
-                            tint: clockTint(viewModel)
-                        )
-                        .padding(.top, 110)
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(.opacity)
                 }
 
                 if let snap, snap.hasTrack {

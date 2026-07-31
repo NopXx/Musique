@@ -31,6 +31,17 @@ final class SystemWallpaperOperator {
     private var useA = false
     /// Blur + jpeg encode run here so a large artwork doesn't stall main.
     private let renderQueue = DispatchQueue(label: "com.nopxx.musique.wallpaper")
+    /// Reused — building a CIContext per render costs more than the render.
+    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
+    /// Called as the artwork wallpaper becomes (or stops being) the picture the
+    /// desktop is really showing. False while WallpaperAgent is still catching up,
+    /// so the lock screen can cover the gap with its own copy.
+    var onLiveChange: ((Bool) -> Void)?
+    private var isLive = false {
+        didSet { if isLive != oldValue { onLiveChange?(isLive) } }
+    }
+    private var landWatch: Timer?
 
     /// Original desktop image URL per display, captured before the first swap.
     /// Mirrored to `backupURL` on disk for crash recovery.
@@ -99,30 +110,63 @@ final class SystemWallpaperOperator {
         if key == readyKey, let url = readyURL {
             setAll(to: url)
         } else {
+            log.info("apply — nothing prepared for this artwork; rendering on the tap")
             render(image, blurRadius: blurRadius, key: key) { [weak self] url in
                 self?.setAll(to: url)
             }
         }
     }
 
-    /// Blur + jpeg-encode `image` to the next A/B file off-main, then cache it as
-    /// `readyURL`/`readyKey`. `setDesktopImageURL` caches by URL and won't re-read
-    /// a path it already shows, so we alternate two filenames per render.
+    /// Downscale → blur → jpeg-encode `image` to the next A/B file off-main, then
+    /// cache it as `readyURL`/`readyKey`. `setDesktopImageURL` caches by URL and
+    /// won't re-read a path it already shows, so we alternate two filenames.
+    ///
+    /// Scaling to the screen first is what makes this fast: artwork comes back at
+    /// up to 3000², and a wide Gaussian over that many pixels — plus a full-size
+    /// TIFF→bitmap→jpeg round trip — took seconds. The blur radius scales with the
+    /// image, so the result looks the same. It all stays in Core Image, which
+    /// writes the jpeg directly.
     private func render(_ image: NSImage, blurRadius: Double, key: String,
                         completion: ((URL) -> Void)? = nil) {
         useA.toggle()
         let dest = useA ? artworkA : artworkB
+        // NSScreen is main-only — read the target size before hopping off.
+        let target = targetPixelSize
         renderQueue.async { [weak self] in
             guard let self else { return }
-            let rendered = blurRadius > 0 ? (image.blurred(radius: blurRadius) ?? image) : image
-            guard let jpg = rendered.jpegData() else {
-                self.log.error("render — could not encode artwork to jpeg")
+            let started = Date()
+            guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                self.log.error("render — artwork has no CGImage")
                 return
             }
-            do { try jpg.write(to: dest) } catch {
+            var ci = CIImage(cgImage: cg)
+            // Crop to the screen's aspect first — macOS fills the desktop with
+            // this image, so the overhang is decoded and thrown away. A square
+            // 3000² artwork on a 16:10 screen is a third of the pixels wasted.
+            ci = ci.cropped(to: Self.aspectFill(ci.extent, aspect: target.width / target.height))
+            // Then match the screen's pixel count; never upscale.
+            let scale = min(1, target.width / ci.extent.width)
+            if scale < 1 {
+                ci = ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            }
+            if blurRadius > 0 {
+                let extent = ci.extent
+                let blur = CIFilter(name: "CIGaussianBlur")
+                blur?.setValue(ci.clampedToExtent(), forKey: kCIInputImageKey)
+                blur?.setValue(blurRadius * scale, forKey: kCIInputRadiusKey)
+                // Clamp first so edges don't fade out, then crop back.
+                if let out = blur?.outputImage { ci = out.cropped(to: extent) }
+            }
+            do {
+                try self.ciContext.writeJPEGRepresentation(
+                    of: ci, to: dest, colorSpace: CGColorSpaceCreateDeviceRGB(),
+                    options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.9])
+            } catch {
                 self.log.error("render — jpeg write failed: \(error.localizedDescription, privacy: .public)")
                 return
             }
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            self.log.info("render — \(Int(ci.extent.width))×\(Int(ci.extent.height)) in \(ms)ms")
             DispatchQueue.main.async {
                 self.readyURL = dest
                 self.readyKey = key
@@ -131,8 +175,44 @@ final class SystemWallpaperOperator {
         }
     }
 
+    /// The largest centred sub-rect of `extent` with the given width/height ratio —
+    /// the part of the artwork that actually ends up on screen.
+    private static func aspectFill(_ extent: CGRect, aspect: CGFloat) -> CGRect {
+        var size = extent.size
+        if size.width / size.height > aspect {
+            size.width = size.height * aspect
+        } else {
+            size.height = size.width / aspect
+        }
+        return CGRect(x: extent.midX - size.width / 2, y: extent.midY - size.height / 2,
+                      width: size.width, height: size.height)
+    }
+
+    /// Backing-pixel size of the largest target screen — what the wallpaper is
+    /// rendered at. Anything bigger is detail macOS throws away.
+    private var targetPixelSize: CGSize {
+        let screens = targetScreens.isEmpty ? NSScreen.screens : targetScreens
+        return screens.reduce(CGSize(width: 1920, height: 1080)) { biggest, screen in
+            let px = CGSize(width: screen.frame.width * screen.backingScaleFactor,
+                            height: screen.frame.height * screen.backingScaleFactor)
+            return px.width * px.height > biggest.width * biggest.height ? px : biggest
+        }
+    }
+
+    /// The motion wallpaper took the desktop over — stop tracking ours *without*
+    /// putting the user's picture back, which would paint over the video. The
+    /// captured originals stay, so unlock still restores.
+    func standDown() {
+        landWatch?.invalidate()
+        landWatch = nil
+        isLive = false
+    }
+
     /// Put every display's original wallpaper back, if we changed it.
     func restore() {
+        landWatch?.invalidate()
+        landWatch = nil
+        isLive = false
         guard !savedURLs.isEmpty else { return }
         for screen in NSScreen.screens {
             guard let id = displayID(screen), let url = savedURLs[id] else { continue }
@@ -168,6 +248,10 @@ final class SystemWallpaperOperator {
         guard !captured.isEmpty else { return false }
         savedURLs = captured
         writeBackup(savedURLs)
+        // The still lands before the motion wallpaper does, so snapshot the
+        // wallpaper store now too: a backup taken later would find our own artwork
+        // on every Desktop node and fall back to the lock-screen image.
+        MotionWallpaperStore.primeBackup()
         return true
     }
 
@@ -189,7 +273,36 @@ final class SystemWallpaperOperator {
     }
 
     private func setAll(to url: URL) {
+        let started = Date()
         for screen in targetScreens { setDesktop(url, for: screen) }
+        let ms = Int(Date().timeIntervalSince(started) * 1000)
+        let kb = (try? fm.attributesOfItem(atPath: url.path)[.size] as? Int).flatMap { $0 } ?? 0
+        log.info("setDesktopImageURL — \(kb / 1024)KB in \(ms)ms")
+        waitForDesktopToLand(since: started)
+    }
+
+    /// `setDesktopImageURL` returns in a millisecond but WallpaperAgent takes
+    /// *seconds* to repaint the desktop the lock screen shows. Report the gap so
+    /// the overlay can cover it with its own copy instead of leaving the old
+    /// wallpaper on screen. WallpaperAgent rewrites the wallpaper store once the
+    /// new picture is up; poll for that, and give up (assume landed) after a cap
+    /// so a missed write can't pin our copy over the native clock forever.
+    private func waitForDesktopToLand(since started: Date) {
+        landWatch?.invalidate()
+        let before = MotionWallpaperStore.storeModified()
+        let deadline = Date().addingTimeInterval(6)
+        landWatch = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else { timer.invalidate(); return }
+                let now = MotionWallpaperStore.storeModified()
+                let landed = now != before
+                guard landed || Date() > deadline else { return }
+                timer.invalidate()
+                self.landWatch = nil
+                self.log.info("desktop wallpaper landed after \(Int(Date().timeIntervalSince(started) * 1000))ms\(landed ? "" : " (timed out — assuming it did)")")
+                self.isLive = true
+            }
+        }
     }
 
     private func setDesktop(_ url: URL, for screen: NSScreen) {
@@ -221,28 +334,5 @@ final class SystemWallpaperOperator {
             if let id = CGDirectDisplayID(k), let url = URL(string: v) { map[id] = url }
         }
         return map.isEmpty ? nil : map
-    }
-}
-
-private extension NSImage {
-    func jpegData(compression: CGFloat = 0.9) -> Data? {
-        guard let tiff = tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff) else { return nil }
-        return rep.representation(using: .jpeg, properties: [.compressionFactor: compression])
-    }
-
-    /// Gaussian-blurred copy. Clamps first so edges don't fade to transparent,
-    /// then crops back to the original extent.
-    func blurred(radius: Double) -> NSImage? {
-        guard let tiff = tiffRepresentation,
-              let ci = CIImage(data: tiff) else { return nil }
-        let extent = ci.extent
-        guard let blur = CIFilter(name: "CIGaussianBlur") else { return nil }
-        blur.setValue(ci.clampedToExtent(), forKey: kCIInputImageKey)
-        blur.setValue(radius, forKey: kCIInputRadiusKey)
-        guard let output = blur.outputImage else { return nil }
-        let ctx = CIContext()
-        guard let cg = ctx.createCGImage(output, from: extent) else { return nil }
-        return NSImage(cgImage: cg, size: extent.size)
     }
 }

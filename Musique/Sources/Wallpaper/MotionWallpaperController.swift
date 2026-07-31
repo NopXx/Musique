@@ -3,8 +3,9 @@ import os
 
 /// Drives the *motion* desktop wallpaper: as the now-playing track changes, stage
 /// its animated artwork and make it the real system wallpaper via the wallpaper
-/// extension (see `MotionWallpaperStore`). Opt-in per the `desktop_animated_wallpaper`
-/// setting; distinct from the lock-only static-image wallpaper (`set_system_wallpaper`).
+/// extension (see `MotionWallpaperStore`). Shares the one `set_system_wallpaper`
+/// opt-in with the static-image wallpaper: this path runs for tracks that have
+/// motion artwork, the still for the rest.
 ///
 /// "Auto per song": the first track activates our wallpaper (rewrite the store +
 /// reload WallpaperAgent, one flash). Every later track just overwrites the staged
@@ -20,13 +21,21 @@ final class MotionWallpaperController {
     private var desiredRemote: URL?
     /// Clip whose staging failed; skipped until a different one comes along.
     private var failedStagingSource: URL?
+    /// A detached activate/deactivate is rewriting the wallpaper store. New store
+    /// work is skipped while set — the two would fight over WallpaperAgent.
+    private var storeBusy = false
 
-    private var enabled: Bool { SettingsStore.shared.bool(["lockscreen", "desktop_animated_wallpaper"]) }
+    private var enabled: Bool { SettingsStore.shared.bool(["lockscreen", "set_system_wallpaper"]) }
 
     /// Called whenever the wallpaper starts or stops actually playing our clip, so
     /// the lock screen knows whether the real desktop is showing the artwork or it
     /// has to draw its own copy (activation is slow and can fail outright).
     var onLiveChange: ((Bool) -> Void)?
+
+    /// Fired once a restore has actually finished. The restore puts the user's own
+    /// wallpaper back, so whoever wants the desktop next — the still artwork, when
+    /// the next track has no video — has to claim it *after* this, not before.
+    var onRestored: (() -> Void)?
 
     private var isLive = false {
         didSet { if isLive != oldValue { onLiveChange?(isLive) } }
@@ -58,15 +67,29 @@ final class MotionWallpaperController {
         }
     }
 
-    /// Turn the feature off: restore the user's previous wallpaper.
-    func disableIfActive() {
+    /// Turn the feature off: restore the user's previous wallpaper. Runs the slow
+    /// store work in the background; pass `blocking: true` only on app quit, where
+    /// returning before the restore finished would leave our wallpaper behind.
+    func disableIfActive(blocking: Bool = false) {
         desiredRemote = nil   // also cancels any in-flight download's effect
         isLive = false
         guard storeActivated else { return }
         activeContentID = nil
         storeActivated = false
-        MotionWallpaperStore.deactivate()
-        log.info("motion wallpaper deactivated — restored previous wallpaper")
+        if blocking {
+            MotionWallpaperStore.deactivate()
+            log.info("motion wallpaper deactivated — restored previous wallpaper")
+            return
+        }
+        storeBusy = true
+        Task.detached(priority: .userInitiated) { [log] in
+            MotionWallpaperStore.deactivate()
+            log.info("motion wallpaper deactivated — restored previous wallpaper")
+            await MainActor.run {
+                self.storeBusy = false
+                self.onRestored?()
+            }
+        }
     }
 
     private func activate(local: URL) {
@@ -90,18 +113,45 @@ final class MotionWallpaperController {
             log.info("motion wallpaper swapped — content \(staged.contentID, privacy: .public)")
         } else {
             // First activation: point the store at us + reload the agent once.
+            // The store work bounces WallpaperAgent and waits for the respawn —
+            // seconds of blocking — so it runs detached; on the main actor it
+            // froze the enlarge animation and the overlay's own video for the
+            // whole wait. The overlay keeps playing its copy until `isLive`.
             // Only claim to be active if the store actually took the rewrite —
             // otherwise deactivate() would later "restore" a wallpaper we never
             // replaced, and a retry on the next track would never happen.
-            guard MotionWallpaperStore.activate(choiceID: MotionWallpaperStore.stableChoiceID, videoURL: staged.url) else {
-                log.error("motion wallpaper activation failed — wallpaper store not rewritten")
-                return
+            guard !storeBusy else { return }   // in flight; the next sync retries
+            storeBusy = true
+            // Honour the lock screen's "Display on" choice: main-only limits the
+            // store rewrite to the main display's nodes, like the overlay windows.
+            let onlyDisplay = SettingsStore.shared.string(["lockscreen", "screens"]) == "all"
+                ? nil : MotionWallpaperStore.mainDisplayUUID()
+            Task.detached(priority: .userInitiated) {
+                let ok = MotionWallpaperStore.activate(choiceID: MotionWallpaperStore.stableChoiceID,
+                                                       videoURL: staged.url, onlyDisplayUUID: onlyDisplay)
+                await MainActor.run { self.finishActivation(ok: ok, contentID: staged.contentID) }
             }
-            activeContentID = staged.contentID
-            storeActivated = true
-            isLive = true
-            log.info("motion wallpaper activated — content \(staged.contentID, privacy: .public)")
         }
+    }
+
+    /// Back on the main actor after the detached store rewrite. The user may have
+    /// shrunk the artwork or unlocked while it ran — `desiredRemote` is nil then,
+    /// and a takeover nobody wants any more is rolled straight back.
+    private func finishActivation(ok: Bool, contentID: String) {
+        storeBusy = false
+        guard ok else {
+            log.error("motion wallpaper activation failed — wallpaper store not rewritten")
+            return
+        }
+        activeContentID = contentID
+        storeActivated = true
+        guard desiredRemote != nil else {
+            log.info("motion wallpaper activated but no longer wanted — rolling back")
+            disableIfActive()
+            return
+        }
+        isLive = true
+        log.info("motion wallpaper activated — content \(contentID, privacy: .public)")
     }
 
     private func animatedURL(_ art: ArtworkResult) -> URL? {

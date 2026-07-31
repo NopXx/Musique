@@ -207,6 +207,16 @@ enum MotionWallpaperStore {
         }
     }
 
+    /// Capture the user's wallpaper *before* anything of ours reaches the desktop.
+    /// The still artwork goes up first (it's instant) while the motion clip
+    /// downloads, so by activation time every Desktop node shows our own file and
+    /// `backupOnce` could only fall back to the sibling Idle image. No-op once a
+    /// backup exists.
+    static func primeBackup() {
+        guard let root = readStore() else { return }
+        backupOnce(root)
+    }
+
     /// Repair a store left pointing at us by a prior session that quit/crashed
     /// without deactivating. Idempotent: a no-op (and no agent reload) unless some
     /// Desktop node still references our extension. Call once at launch.
@@ -555,10 +565,9 @@ enum MotionWallpaperStore {
 
     /// SIGTERM WallpaperAgent and wait for it to exit. launchd brings it right
     /// back, so this is a reload rather than a shutdown.
-    /// ponytail: bounded busy-wait on the main thread — the agent normally goes in
-    /// well under 100ms and the retry loop rarely fires, but the ceiling is a few
-    /// seconds. If the stall ever shows at lock/unlock, move the whole
-    /// activate/deactivate off the main actor rather than shortening the waits.
+    /// Bounded busy-wait, fine off-main: activate/deactivate run detached from the
+    /// controller (the stall used to freeze the enlarge animation when this sat on
+    /// the main actor). Only the app-quit restore still blocks main, on purpose.
     private static func stopWallpaperAgentAndWait() {
         let pids = wallpaperAgentPIDs()
         bounceWallpaperAgent()
