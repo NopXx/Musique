@@ -151,6 +151,9 @@ final class MiniPlayerViewModel: ObservableObject {
             await MainActor.run {
                 guard let self else { return }
                 guard self.lastArtworkKey == key else { return }
+                // Empty means the lookup failed; keep whatever is on screen rather
+                // than clearing it, which is the same call the code above makes.
+                guard result.artworkURL != nil else { return }
                 self.artwork = result
                 WidgetDataManager.shared.update(
                     snapshot: self.snapshot,

@@ -26,11 +26,27 @@ actor ArtworkService {
 
     private let endpoint = URL(string: "https://apple-music-artwork.nopxx.site/api/search")!
     private var cache: [String: ArtworkResult] = [:]
+    private var inflight: [String: Task<ArtworkResult, Never>] = [:]
 
+    /// Every track change fans out to several view models — lock screen, mini player,
+    /// menu bar, widget — and they all ask for the same artwork at the same moment.
+    /// One shared request per key, held in an unstructured `Task` so it belongs to the
+    /// service and not to whichever caller happened to start it: racing callers used to
+    /// cancel each other's URLSession task (`[Artwork] api error: cancelled`), and the
+    /// loser then committed an empty result over a perfectly good cover.
     func lookup(title: String, artist: String, album: String) async -> ArtworkResult {
         let key = "\(title.lowercased())|\(artist.lowercased())|\(album.lowercased())"
         if let hit = cache[key] { return hit }
+        if let running = inflight[key] { return await running.value }
 
+        let task = Task { await self.fetch(key: key, title: title, artist: artist, album: album) }
+        inflight[key] = task
+        let result = await task.value
+        inflight[key] = nil
+        return result
+    }
+
+    private func fetch(key: String, title: String, artist: String, album: String) async -> ArtworkResult {
         let term = title.isEmpty ? artist : "\(title) \(artist)"
         guard !term.trimmingCharacters(in: .whitespaces).isEmpty else {
             return ArtworkResult()

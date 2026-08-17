@@ -132,6 +132,11 @@ final class LockScreenViewModel: ObservableObject {
             }
             await MainActor.run {
                 guard let self, self.lastArtworkKey == key else { return }
+                // A failed lookup comes back empty. Committing it wipes the cover the
+                // fullscreen backdrop is built from and leaves the bare palette
+                // gradient — hold the previous artwork instead, the same way the
+                // track-change path above deliberately does.
+                guard result.artworkURL != nil else { return }
                 self.artwork = result
                 self.artworkImage = downloadedImage
                 if let url = result.artworkURL, !url.isEmpty, url != self.lastPaletteURL {
