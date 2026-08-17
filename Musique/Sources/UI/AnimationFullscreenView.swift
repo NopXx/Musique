@@ -16,26 +16,65 @@ struct AnimationFullscreenView: View {
         return URL(string: s)
     }
 
+    // The clock and card share the lock screen's settings so there's one place to
+    // configure them, read live rather than mirrored onto the view model — this
+    // window is short-lived and rebuilt on every present.
+    private var settings: SettingsStore { .shared }
+    private var clockEnabled: Bool { settings.bool(["lockscreen", "clock"]) }
+    private var clockFormat: String {
+        let f = settings.string(["lockscreen", "clock_format"]); return f.isEmpty ? "system" : f
+    }
+    private var clockDateStyle: String {
+        let s = settings.string(["lockscreen", "clock_date_style"]); return s.isEmpty ? "full" : s
+    }
+    private var showAlbum: Bool { settings.bool(["lockscreen", "show_album"]) }
+    private var showProgress: Bool { settings.bool(["lockscreen", "show_progress"]) }
+    private var padding: CGFloat { CGFloat(settings.int(["lockscreen", "padding"])) }
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                backgroundLayer(width: geo.size.width, height: geo.size.height)
+                // Same component the lock screen overlay draws, so the fullscreen
+                // cover looks identical locked and unlocked.
+                FullscreenArtworkView(artworkURL: artworkURL,
+                                      clipURL: animationURL,
+                                      palette: viewModel.palette,
+                                      backgroundBlur: settings.int(["lockscreen", "background_blur"]))
 
-                fullscreenAnimationLayer(width: geo.size.width, height: geo.size.height)
-
-                VStack {
-                    Spacer()
-
-                    trackInfo
-
-                    Spacer()
-
-                    Text("กดเพื่อปิด")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.3))
-                        .padding(.bottom, 36)
+                // Clock + date pinned to the top, over the artwork — the same block
+                // the lock screen draws. Gated on the same lockscreen.clock setting.
+                if clockEnabled {
+                    LockScreenClockView(timeFormat: clockFormat, dateStyle: clockDateStyle)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .padding(.top, padding + 40)
+                        .allowsHitTesting(false)
                 }
-                .frame(width: geo.size.width, height: geo.size.height)
+
+                // Now-playing card at the bottom — reuses the lock screen card, so the
+                // title/artist, progress and transport all come along. The big artwork
+                // is already on screen, so the card's inline thumbnail is off.
+                if let snap = viewModel.snapshot, snap.hasTrack {
+                    NowPlayingCard(
+                        snap: snap,
+                        showAlbum: showAlbum,
+                        showProgress: showProgress,
+                        width: min(380, geo.size.width * 0.36),
+                        artworkImage: nil,
+                        animatedURL: nil,
+                        animatedArtwork: false,
+                        showInlineArtwork: false,
+                        onArtworkTap: {}
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, padding)
+                }
+
+                Text("กดเพื่อปิด")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.3))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, 12)
+                    .allowsHitTesting(false)
             }
         }
         .contentShape(Rectangle())
@@ -46,100 +85,4 @@ struct AnimationFullscreenView: View {
         }
     }
 
-    @ViewBuilder
-    private func backgroundLayer(width: CGFloat, height: CGFloat) -> some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(viewModel.palette.gradientStart),
-                    Color(viewModel.palette.gradientMid),
-                    Color(viewModel.palette.gradientEnd),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            if let url = artworkURL {
-                AsyncImage(url: url) { phase in
-                    if let img = phase.image {
-                        img.resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .blur(radius: 80)
-                            .saturation(2.0)
-                            .brightness(-0.15)
-                            .opacity(0.5)
-                    }
-                }
-                .frame(width: width, height: height)
-                .clipped()
-            }
-
-            Color.black.opacity(0.35)
-        }
-    }
-
-    @ViewBuilder
-    private func fullscreenAnimationLayer(width: CGFloat, height: CGFloat) -> some View {
-        let size = min(width, height) * 0.5
-        ZStack {
-            if let url = animationURL {
-                AnimatedArtworkView(url: url, contentMode: .fit, cornerRadius: 0)
-                    .frame(width: size, height: size)
-            } else if let url = artworkURL {
-                AsyncImage(url: url) { phase in
-                    if let img = phase.image {
-                        img.resizable()
-                            .aspectRatio(contentMode: .fit)
-                    } else {
-                        LinearGradient(
-                            colors: [
-                                Color(viewModel.palette.gradientStart),
-                                Color(viewModel.palette.gradientMid),
-                                Color(viewModel.palette.gradientEnd),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    }
-                }
-            } else {
-                LinearGradient(
-                    colors: [
-                        Color(viewModel.palette.gradientStart),
-                        Color(viewModel.palette.gradientMid),
-                        Color(viewModel.palette.gradientEnd),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            }
-
-            LinearGradient(
-                colors: [
-                    .black.opacity(0.15),
-                    .black.opacity(0.0),
-                    .black.opacity(0.55),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-        .frame(width: width, height: height)
-        .clipped()
-    }
-
-    @ViewBuilder
-    private var trackInfo: some View {
-        VStack(spacing: 6) {
-            Text(viewModel.snapshot?.title ?? "")
-                .font(.system(size: 28, weight: .bold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-
-            Text(viewModel.snapshot?.artist ?? "")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(.white.opacity(0.7))
-                .lineLimit(1)
-        }
-    }
 }

@@ -7,127 +7,107 @@ struct LockScreenPlayerView: View {
     var body: some View {
         GeometryReader { geo in
             let snap = viewModel.snapshot
-            let animationURLString = viewModel.animatedArtwork
+            // The 52pt thumbnail keeps the standard-res clip — it doesn't need the
+            // ultra one and shouldn't pay for the extra download.
+            let thumbURL = (viewModel.animatedArtwork
                 ? (viewModel.artwork.animationURL ?? viewModel.artwork.animationTallURL)
-                : nil
-            let animURL = animationURLString.flatMap(URL.init(string:))
+                : nil).flatMap(URL.init(string:))
 
-            let largeSize = min(geo.size.height * 0.40, geo.size.width * 0.38)
             let cardWidth = min(350, geo.size.width * 0.35)
 
             ZStack {
-                // Crossfade layer: the outgoing desktop, shown instantly then
-                // faded to nil to mask the un-animatable real-wallpaper swap.
-                if let cf = viewModel.crossfadeImage {
-                    Image(nsImage: cf)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                        .ignoresSafeArea()
-                        .allowsHitTesting(false)
-                        .transition(.asymmetric(insertion: .identity, removal: .opacity))
-                }
-
                 let showLarge = viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
                 let showInline = !viewModel.isLargeArtwork && !viewModel.fullscreenAnimationActive
-                // Only stand down once the real desktop is *actually* playing our
-                // clip. Activation takes seconds and can fail (unwritable wallpaper
-                // store, nothing restorable to back up); trusting the setting alone
-                // left the lock screen showing no artwork at all in those cases.
-                let motionActive = viewModel.motionWallpaperLive && animURL != nil
-
-                // Whether the desktop is showing artwork of ours yet — the still
-                // goes up first even for a motion track, the video takes over when
-                // it's really playing.
-                let desktopHasArtwork = viewModel.staticWallpaperLive || motionActive
-                // With the wallpaper feature off nothing will ever put the artwork
-                // on the desktop, so an enlarged motion track has to be drawn here
-                // — the one case where we still paint a video over the native clock.
-                if showLarge, let animURL, !viewModel.setSystemWallpaper {
-                    AnimatedArtworkView(url: animURL, staticImage: viewModel.artworkImage,
-                                        contentMode: .fill, cornerRadius: 0)
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                        .ignoresSafeArea()
-                        .transition(.opacity)
-                }
-
-                // Until then, present a motion track exactly like a still one: the
-                // blurred cover behind the enlarged artwork. Drawing our own copy of
-                // the video for the two or three seconds the swap takes made the
-                // enlarge look like a different feature, and covered the clock.
-                if showLarge, !desktopHasArtwork, viewModel.setSystemWallpaper,
-                   let image = viewModel.artworkImage {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .blur(radius: CGFloat(viewModel.backgroundBlur) / 3)
-                        .clipped()
-                        .ignoresSafeArea()
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
-                }
 
                 if showLarge {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture { shrink() }
+                    Group {
+                        FullscreenArtworkView(artworkImage: viewModel.artworkImage,
+                                              // Fallback for when the view model's own
+                                              // download came back empty — the backdrop
+                                              // needs a still even if the card's
+                                              // thumbnail went without one.
+                                              artworkURL: stillURL,
+                                              clipURL: fullscreenAnimationURL,
+                                              palette: viewModel.palette,
+                                              backgroundBlur: viewModel.backgroundBlur)
+
+                        if viewModel.clock {
+                            LockScreenClockView(timeFormat: viewModel.clockFormat,
+                                                dateStyle: viewModel.clockDateStyle)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                .padding(.top, CGFloat(viewModel.padding) + 56)
+                                .allowsHitTesting(false)
+                        }
+
+                        // Click anywhere to shrink. Above the artwork so the whole
+                        // screen is the target, below the card so the transport
+                        // buttons still win their own hits.
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture { shrink() }
+                    }
+                    // ponytail: opacity, not `if` — removing the subtree tears down
+                    // the AVPlayer and restarts the clip from frame 0 every time the
+                    // password panel blinks. Ceiling: swap to conditional removal if
+                    // a hidden decoding video ever shows up in powermetrics.
+                    .opacity(viewModel.lockUIVisible ? 0 : 1)
+                    .allowsHitTesting(!viewModel.lockUIVisible)
+                    .transition(.opacity)
                 }
 
                 if let snap, snap.hasTrack {
-                    VStack(spacing: 20) {
-                        // The enlarged cover, shown while the desktop isn't carrying
-                        // the artwork itself. Deliberately the still even for a
-                        // motion track: the video belongs on the desktop, and this
-                        // is what's on screen until it gets there.
-                        if showLarge, !motionActive, !viewModel.staticWallpaperLive {
-                            ArtworkLayer(
-                                artworkImage: viewModel.artworkImage,
-                                animatedURL: viewModel.setSystemWallpaper ? nil : animURL,
-                                size: largeSize
-                            )
-                            .onTapGesture { shrink() }
-                            .transition(.scale(scale: 0.92).combined(with: .opacity))
-                        }
-
-                        NowPlayingCard(
-                            snap: snap,
-                            showAlbum: viewModel.showAlbum,
-                            showProgress: viewModel.showProgress,
-                            width: cardWidth,
-                            artworkImage: viewModel.artworkImage,
-                            animatedURL: animURL,
-                            animatedArtwork: viewModel.animatedArtwork,
-                            showInlineArtwork: showInline,
-                            onArtworkTap: {
-                                // Enlarge — the controller reacts to `isLargeArtwork`
-                                // and turns on whichever real wallpaper (static or
-                                // motion) its setting allows. Tap is the single
-                                // activation signal for both.
-                                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                                    viewModel.isLargeArtwork = true
-                                }
+                    NowPlayingCard(
+                        snap: snap,
+                        showAlbum: viewModel.showAlbum,
+                        showProgress: viewModel.showProgress,
+                        width: cardWidth,
+                        artworkImage: viewModel.artworkImage,
+                        animatedURL: thumbURL,
+                        animatedArtwork: viewModel.animatedArtwork,
+                        showInlineArtwork: showInline,
+                        onArtworkTap: {
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                                viewModel.isLargeArtwork = true
                             }
-                        )
-                    }
+                        }
+                    )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, CGFloat(viewModel.padding) + 160)
+                    // 160pt of clearance for loginwindow's avatar and password
+                    // field — only meaningful while that UI is actually on screen.
+                    // The fullscreen artwork covers it, so the card drops to the
+                    // real padding while it's up, and gives the room back the
+                    // moment we fade for the password panel.
+                    .padding(.bottom, CGFloat(viewModel.padding)
+                             + (showLarge && !viewModel.lockUIVisible ? 0 : 160))
                     .padding(.horizontal, CGFloat(viewModel.padding))
                 }
-
             }
-            // Fade the stand-in copy out as the real wallpaper lands, rather than
-            // cutting to it.
-            .animation(.easeInOut(duration: 0.35), value: viewModel.staticWallpaperLive)
-            .animation(.easeInOut(duration: 0.35), value: viewModel.motionWallpaperLive)
+            // A filled cover is taller than the screen and a ZStack doesn't clip:
+            // without this the overflow lands outside the hosting view and the
+            // desktop shows through at the corners.
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
+            .animation(.easeInOut(duration: 0.28), value: viewModel.lockUIVisible)
         }
         .ignoresSafeArea()
     }
 
-    /// Exit large mode — the inverse of the thumbnail tap. The controller reacts
-    /// to `isLargeArtwork` flipping false and restores the previous wallpaper.
+    /// Highest-resolution *square* clip first: this layer is screen-height now, not
+    /// a 350pt card, so the standard-res one visibly softens. The tall (3:4)
+    /// variant is deliberately not in the chain — the frame is built from the
+    /// still's aspect, so a tall clip would only get cropped.
+    private var stillURL: URL? {
+        (viewModel.artwork.artworkUltraURL ?? viewModel.artwork.artworkURL)
+            .flatMap(URL.init(string:))
+    }
+
+    private var fullscreenAnimationURL: URL? {
+        guard viewModel.animatedArtwork else { return nil }
+        return (viewModel.artwork.animationSquareUltraURL ?? viewModel.artwork.animationURL)
+            .flatMap(URL.init(string:))
+    }
+
+    /// Exit large mode — the inverse of the thumbnail tap.
     private func shrink() {
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             viewModel.isLargeArtwork = false
@@ -136,30 +116,70 @@ struct LockScreenPlayerView: View {
 
 }
 
-private struct ArtworkLayer: View {
-    let artworkImage: NSImage?
-    let animatedURL: URL?
-    let size: CGFloat
+/// The lock screen's own clock, drawn only while the fullscreen artwork is up —
+/// it covers loginwindow's clock edge to edge, and losing the time is not an
+/// acceptable price for a bigger cover.
+// Not private: the unlocked fullscreen animation window (AnimationFullscreenView)
+// draws the same clock and now-playing card over the artwork.
+struct LockScreenClockView: View {
+    let timeFormat: String   // system | 24h | 12h
+    let dateStyle: String    // full | short | off
 
     var body: some View {
-        ZStack {
-            if let animatedURL {
-                AnimatedArtworkView(url: animatedURL, staticImage: artworkImage, contentMode: .fill, cornerRadius: 20)
-            } else if let nsImage = artworkImage {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Color.white.opacity(0.05)
+        // Minute granularity: no seconds are shown, so one wake a minute is the
+        // entire redraw budget this needs.
+        TimelineView(.everyMinute) { ctx in
+            VStack(spacing: 2) {
+                Text(Self.timeString(ctx.date, timeFormat))
+                    .font(.system(size: 82, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+
+                if dateStyle != "off" {
+                    Text(Self.dateString(ctx.date, dateStyle))
+                        .font(.system(size: 19, weight: .medium, design: .rounded))
+                        .opacity(0.85)
+                }
             }
+            .foregroundStyle(.white)
+            // The artwork underneath can be any brightness — a drop shadow is
+            // cheaper than a scrim and doesn't dull the cover.
+            .shadow(color: .black.opacity(0.5), radius: 18, x: 0, y: 4)
         }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .shadow(color: .black.opacity(0.55), radius: 36, x: 0, y: 22)
+    }
+
+    // ponytail: a DateFormatter per tick, on purpose — this runs once a minute, so
+    // caching costs more code than it saves, and a cached one would miss the user
+    // flipping the app's language or the system 24-hour switch underneath us.
+    private static func timeString(_ date: Date, _ mode: String) -> String {
+        let f = DateFormatter()
+        f.locale = locale
+        switch mode {
+        case "24h": f.dateFormat = "HH:mm"
+        // No AM/PM, like the iOS lock screen. "system" keeps it, because that's
+        // what following the system means.
+        case "12h": f.dateFormat = "h:mm"
+        default:
+            f.dateStyle = .none
+            f.timeStyle = .short
+        }
+        return f.string(from: date)
+    }
+
+    private static func dateString(_ date: Date, _ style: String) -> String {
+        let f = DateFormatter()
+        f.locale = locale
+        f.setLocalizedDateFormatFromTemplate(style == "short" ? "EEEdMMM" : "EEEEdMMMM")
+        return f.string(from: date)
+    }
+
+    /// Follow the app's own language switch rather than the system's — every other
+    /// string on this overlay comes from `L10n`, which reads that setting.
+    private static var locale: Locale {
+        Locale(identifier: L10n.lang == "en" ? "en_US" : "th_TH")
     }
 }
 
-private struct NowPlayingCard: View {
+struct NowPlayingCard: View {
     let snap: NowPlayingSnapshot
     let showAlbum: Bool
     let showProgress: Bool
@@ -179,20 +199,20 @@ private struct NowPlayingCard: View {
                         .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
 
-                VStack(alignment: showInlineArtwork ? .leading : .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(snap.title)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: showInlineArtwork ? .leading : .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                     Text(snap.artist)
                         .font(.system(size: 13, weight: .regular))
                         .foregroundStyle(.white.opacity(0.6))
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: showInlineArtwork ? .leading : .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 if snap.isPlaying {
