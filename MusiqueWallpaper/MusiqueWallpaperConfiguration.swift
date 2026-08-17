@@ -43,6 +43,11 @@ struct MusiqueWallpaperConfiguration: AppExtensionConfiguration {
             (#selector(WallpaperXPCHandler.snapshot(withId:reply:)), 0, true),
             (#selector(WallpaperXPCHandler.selectedChoicesDidChange(for:reply:)), 0, false),
             (#selector(WallpaperXPCHandler.removeChoiceRequest(withChoiceRequest:reply:)), 0, false),
+            // WallpaperAgent hands this a `WallpaperContentTypeSetXPC`; without the
+            // allowlist NSXPC drops the message with a secure-coding exception, the
+            // provider never finishes setting up, and the desktop shows the user's
+            // own wallpaper even though our appex is alive and rendering frames.
+            (#selector(WallpaperXPCHandler.provideSettingsViewModels(withContentTypes:reply:)), 0, false),
         ]
         for (sel, idx, isReply) in slots {
             exported.setClasses(classSet, for: sel, argumentIndex: idx, ofReply: isReply)

@@ -160,6 +160,15 @@ final class MotionWallpaperController {
         }
         isLive = true
         log.info("motion wallpaper activated — content \(contentID, privacy: .public)")
+        // Tracks that changed while this first activation was in flight had their
+        // clip staged but skipped the swap (storeBusy). A download that lands later
+        // self-heals through the resolve callback, but one that was already cached
+        // was dropped for good. Reconcile to whatever's wanted now — activate()
+        // dedups on activeContentID, so this no-ops when we're already current.
+        if let remote = desiredRemote,
+           let local = AnimatedArtworkCache.shared.localURLIfCached(for: remote) {
+            activate(local: local)
+        }
     }
 
     private func animatedURL(_ art: ArtworkResult) -> URL? {

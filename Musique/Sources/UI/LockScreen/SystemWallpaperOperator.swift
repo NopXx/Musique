@@ -28,7 +28,6 @@ final class SystemWallpaperOperator {
     /// a *different* URL — hence A/B ping-pong instead of one fixed filename.
     private let artworkA: URL
     private let artworkB: URL
-    private var useA = false
     /// Blur + jpeg encode run here so a large artwork doesn't stall main.
     private let renderQueue = DispatchQueue(label: "com.nopxx.musique.wallpaper")
     /// Reused — building a CIContext per render costs more than the render.
@@ -51,6 +50,13 @@ final class SystemWallpaperOperator {
     /// `apply` skip the (slow) blur+encode when the artwork is already prepared.
     private var readyURL: URL?
     private var readyKey: String?
+
+    /// The file actually on the desktop right now (last one handed to `setAll`).
+    /// The A/B pick is made against *this*, not `readyURL`: `prepare` advances
+    /// `readyURL` without touching the desktop, so choosing off it could land the
+    /// next apply back on the file already showing — and `setDesktopImageURL`
+    /// no-ops on a repeat URL, which is why the third track's wallpaper froze.
+    private var lastAppliedURL: URL?
 
     private init() {
         let home = URL(fileURLWithPath: NSHomeDirectory())
@@ -128,8 +134,13 @@ final class SystemWallpaperOperator {
     /// writes the jpeg directly.
     private func render(_ image: NSImage, blurRadius: Double, key: String,
                         completion: ((URL) -> Void)? = nil) {
-        useA.toggle()
-        let dest = useA ? artworkA : artworkB
+        // Alternate the two files so setDesktopImageURL — which caches by URL and
+        // won't re-read a path it already shows — always sees a new path. Pick the
+        // buffer that ISN'T the one currently on the desktop, so the swap can never
+        // resolve to the URL already showing (a silent no-op that froze the third
+        // track's wallpaper). Chosen against `lastAppliedURL`, not `readyURL`: a
+        // prewarm render advances `readyURL` without changing the desktop.
+        let dest = (lastAppliedURL == artworkA) ? artworkB : artworkA
         // NSScreen is main-only — read the target size before hopping off.
         let target = targetPixelSize
         renderQueue.async { [weak self] in
@@ -284,6 +295,7 @@ final class SystemWallpaperOperator {
 
     private func setAll(to url: URL) {
         let started = Date()
+        lastAppliedURL = url
         for screen in targetScreens { setDesktop(url, for: screen) }
         let ms = Int(Date().timeIntervalSince(started) * 1000)
         let kb = (try? fm.attributesOfItem(atPath: url.path)[.size] as? Int).flatMap { $0 } ?? 0
@@ -316,7 +328,8 @@ final class SystemWallpaperOperator {
 
     private func setDesktop(_ url: URL, for screen: NSScreen) {
         do {
-            try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:])
+            try NSWorkspace.shared.setDesktopImageURL(
+                url, for: screen, options: MotionWallpaperStore.fillScreenOptions)
         } catch {
             log.error("setDesktopImageURL failed: \(error.localizedDescription, privacy: .public)")
         }
