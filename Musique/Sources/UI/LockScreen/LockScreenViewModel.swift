@@ -17,6 +17,14 @@ final class LockScreenViewModel: ObservableObject {
     @Published var backgroundBlur: Int = 60
     @Published var padding: Int = 32
     @Published var setSystemWallpaper: Bool = false
+    @Published var clock: Bool = true
+    @Published var clockFormat: String = "system"
+    @Published var clockDateStyle: String = "full"
+
+    /// True while loginwindow's password panel is on screen. The fullscreen
+    /// artwork covers it completely, so it fades for as long as the panel is up.
+    /// Driven by `LockScreenController`.
+    @Published var lockUIVisible: Bool = false
 
     /// True only once the blurred artwork is *actually* the desktop picture.
     /// `setDesktopImageURL` returns immediately but WallpaperAgent repaints
@@ -29,12 +37,6 @@ final class LockScreenViewModel: ObservableObject {
     /// false — activation still running, or it failed — the copy keeps the artwork
     /// on screen instead of leaving the lock screen bare.
     @Published var motionWallpaperLive: Bool = false
-
-    /// The *outgoing* wallpaper image, shown full-screen at opacity 1 to mask an
-    /// instant real-desktop swap, then faded to nil to reveal the new desktop —
-    /// a crossfade over the un-animatable `setDesktopImageURL`. Driven by
-    /// `LockScreenController`.
-    @Published var crossfadeImage: NSImage?
 
     private weak var monitor: PlayerMonitor?
     private var cancellables = Set<AnyCancellable>()
@@ -86,14 +88,13 @@ final class LockScreenViewModel: ObservableObject {
         let pad = s.int(["lockscreen", "padding"])
         padding = pad > 0 ? pad : 32
         setSystemWallpaper = s.bool(["lockscreen", "set_system_wallpaper"])
-    }
-
-    /// Turn the "artwork as real wallpaper" mode on/off from the on-lock card.
-    /// `merge` publishes to `SettingsStore.$data`, which drives both this view
-    /// model's `readSettings` and `LockScreenController`'s live sync.
-    func setWallpaperEnabled(_ on: Bool) {
-        guard setSystemWallpaper != on else { return }
-        SettingsStore.shared.merge(["lockscreen": ["set_system_wallpaper": on]])
+        // `load()` deep-merges the defaults in, so a settings.json predating these
+        // keys still reads their defaults — no `?? true` fallback needed.
+        clock = s.bool(["lockscreen", "clock"])
+        let format = s.string(["lockscreen", "clock_format"])
+        clockFormat = format.isEmpty ? "system" : format
+        let dateStyle = s.string(["lockscreen", "clock_date_style"])
+        clockDateStyle = dateStyle.isEmpty ? "full" : dateStyle
     }
 
     private func handleTrackUpdate(_ snap: NowPlayingSnapshot?) {

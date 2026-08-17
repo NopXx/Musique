@@ -82,10 +82,14 @@ final class SettingsStore: ObservableObject {
                 "show_progress": true,
                 "animated_artwork": true,
                 "background_blur": 60,
-                "background_style": "blurred_artwork",
                 "padding": 32,
                 "screens": "main",
                 "set_system_wallpaper": false,
+                // Our own clock: the fullscreen artwork covers loginwindow's, so
+                // enlarging would otherwise cost the user the time.
+                "clock": true,
+                "clock_format": "system",     // system | 24h | 12h
+                "clock_date_style": "full",   // full | short | off
             ],
         ]
     }
