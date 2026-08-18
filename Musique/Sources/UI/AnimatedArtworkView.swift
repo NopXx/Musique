@@ -99,6 +99,9 @@ struct AnimatedArtworkView: NSViewRepresentable {
         private var outputItem: AVPlayerItem?
         private var itemObservation: NSKeyValueObservation?
         private var displayLink: CADisplayLink?
+        private var hasVideoFrame = false
+        private var seededImage: NSImage?
+        private var still: NSImage?
         private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
         private var readyObservation: NSKeyValueObservation?
         private var lastURL: URL?
@@ -249,8 +252,6 @@ struct AnimatedArtworkView: NSViewRepresentable {
             displayLink = link
         }
 
-        /// One frame, downscaled hard before the gaussian — the margins are magnified
-        /// blur, so full-resolution pixels would be thrown away twice over.
         @objc private func pullMirrorFrame() {
             guard let output = videoOutput, !mirrorLayers.isEmpty else { return }
             let time = output.itemTime(forHostTime: CACurrentMediaTime())
@@ -258,16 +259,8 @@ struct AnimatedArtworkView: NSViewRepresentable {
                   let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil)
             else { return }
 
-            var image = CIImage(cvPixelBuffer: buffer)
-            let scale = Self.mirrorWorkWidth / max(image.extent.width, 1)
-            image = image.transformed(by: .init(scaleX: scale, y: scale))
-            if mirrorBlur > 0 {
-                let frame = image.extent
-                image = image.clampedToExtent()
-                    .applyingGaussianBlur(sigma: Double(mirrorBlur * scale / 2))
-                    .cropped(to: frame)
-            }
-            guard let cg = ciContext.createCGImage(image, from: image.extent) else { return }
+            guard let cg = blurredMirrorFrame(CIImage(cvPixelBuffer: buffer)) else { return }
+            hasVideoFrame = true
             // Actions off: `contents` has a default cross-fade, and at display rate
             // that smears every frame into the last one.
             CATransaction.begin()
@@ -278,11 +271,27 @@ struct AnimatedArtworkView: NSViewRepresentable {
 
         private static let mirrorWorkWidth: CGFloat = 320
 
+        /// Downscaled hard before the gaussian — the margins are magnified blur, so
+        /// full-resolution pixels would be thrown away twice over.
+        private func blurredMirrorFrame(_ source: CIImage) -> CGImage? {
+            let scale = Self.mirrorWorkWidth / max(source.extent.width, 1)
+            var image = source.transformed(by: .init(scaleX: scale, y: scale))
+            if mirrorBlur > 0 {
+                let frame = image.extent
+                image = image.clampedToExtent()
+                    .applyingGaussianBlur(sigma: Double(mirrorBlur * scale / 2))
+                    .cropped(to: frame)
+            }
+            return ciContext.createCGImage(image, from: image.extent)
+        }
+
         private func stopMirrorFeed() {
             displayLink?.invalidate()
             displayLink = nil
             itemObservation?.invalidate()
             itemObservation = nil
+            hasVideoFrame = false
+            seededImage = nil
             if let videoOutput { outputItem?.remove(videoOutput) }
             outputItem = nil
             videoOutput = nil
@@ -328,19 +337,45 @@ struct AnimatedArtworkView: NSViewRepresentable {
             }
             if imageLayer == nil {
                 let il = CALayer()
-                il.frame = bounds
+                il.frame = contentLayer.bounds
                 il.contentsGravity = gravity == .resizeAspectFill ? .resizeAspectFill : .resizeAspect
                 il.masksToBounds = true
                 contentLayer.insertSublayer(il, at: 0)
                 imageLayer = il
             }
             imageLayer?.contents = image
+            still = image
+            seedMirrors(from: image)
+        }
+
+        /// Put the still in the margins too, blurred the same way the video frames
+        /// will be. A clip that isn't in the cache yet doesn't start playing until it
+        /// has downloaded, and until then the mirrors had nothing to show but the
+        /// black floor — a fullscreen cover with two black bars beside it. The first
+        /// video frame overwrites this.
+        private func seedMirrors(from image: NSImage) {
+            // Once the clip is running its frames own the margins, and a SwiftUI
+            // update re-sends the same still on every tick — so only the first one
+            // per image, and only before video arrives.
+            guard !hasVideoFrame, image !== seededImage,
+                  coverSize != nil, !mirrorLayers.isEmpty,
+                  let tiff = image.tiffRepresentation, let source = CIImage(data: tiff),
+                  let cg = blurredMirrorFrame(source)
+            else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for m in mirrorLayers { m.contents = cg }
+            CATransaction.commit()
         }
 
         func load(url: URL?) {
             guard url != lastURL else { return }
             lastURL = url
             cleanupPlayer()
+            // setStaticImage ran before this for the new track, while the old clip's
+            // frames still counted as live, so its seed was skipped. Now that they're
+            // gone, hand the margins this track's still until the clip starts.
+            still.map { seedMirrors(from: $0) }
             guard let url else { return }
 
             let resolved: URL
