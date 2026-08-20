@@ -136,6 +136,17 @@ struct LockScreenClockView: View {
                 // lock screen clock is the artwork seen *through* the numerals. Needs
                 // a real Shape, which is all TextShape is for; a Text can only ever
                 // carry glass as a frosted rectangle around itself.
+                //
+                // Known: this clock does not look the same in both of its windows.
+                // SkyLightOperator moves the lock screen overlay out of every normal
+                // space into a private WindowServer one, and glass there has no
+                // backdrop to sample — it falls back to a flat pale frost, while the
+                // desktop fullscreen window gets a real refraction. The whole overlay
+                // is affected, the transport card included, so it is not worth trading
+                // the good window's glass away to match the bad one. Everything else
+                // was ruled out by testing: window opacity, background colour, level,
+                // collectionBehavior and canBecomeVisibleWithoutLogin all render the
+                // same.
                 let digits = TextShape(string: Self.timeString(ctx.date, timeFormat),
                                        font: TextShape.clockFont(size: size, weight: .bold))
                 Color.clear
@@ -157,6 +168,12 @@ struct LockScreenClockView: View {
             // The artwork underneath can be any brightness — a drop shadow is
             // cheaper than a scrim and doesn't dull the cover.
             .shadow(color: .black.opacity(0.5), radius: 18, x: 0, y: 4)
+            // Glass also takes its brightness from the host window's NSAppearance,
+            // and the two windows don't resolve the same one — that made the lock
+            // screen's numerals flat grey against the desktop's warm ones, on top of
+            // the sampling difference above. Pinned here rather than on either
+            // window, so nothing else in them is affected.
+            .environment(\.colorScheme, .light)
         }
     }
 
