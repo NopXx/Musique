@@ -252,8 +252,8 @@ struct NowPlayingCard: View {
                 }
 
                 if let onCollapse {
-                    ControlGlyph(systemName: "arrow.down.right.and.arrow.up.left", size: 15)
-                        .onTapGesture { onCollapse() }
+                    ControlGlyph(systemName: "arrow.down.right.and.arrow.up.left",
+                                 size: 15, action: onCollapse)
                 }
             }
 
@@ -262,12 +262,12 @@ struct NowPlayingCard: View {
             }
 
             HStack(spacing: 44) {
-                ControlGlyph(systemName: "backward.fill", size: 22)
-                    .onTapGesture { MusicAppController.previous() }
-                ControlGlyph(systemName: snap.isPlaying ? "pause.fill" : "play.fill", size: 28)
-                    .onTapGesture { MusicAppController.playPause() }
-                ControlGlyph(systemName: "forward.fill", size: 22)
-                    .onTapGesture { MusicAppController.next() }
+                ControlGlyph(systemName: "backward.fill", size: 22,
+                             action: MusicAppController.previous)
+                ControlGlyph(systemName: snap.isPlaying ? "pause.fill" : "play.fill", size: 28,
+                             action: MusicAppController.playPause)
+                ControlGlyph(systemName: "forward.fill", size: 22,
+                             action: MusicAppController.next)
             }
             .padding(.top, 2)
         }
@@ -376,15 +376,44 @@ private struct EqualizerIcon: View {
     }
 }
 
+/// Owns its own press state as well as its action. A bare `.onTapGesture` fires on
+/// release and shows nothing on the way there, which on a card that is otherwise all
+/// motion reads as a dead button — the track had already changed and the glyph never
+/// acknowledged the click.
+///
+/// Not a `Button`: the lock screen overlay is a borderless window that can never
+/// become key, and the tap gesture is the path already proven to work there.
 private struct ControlGlyph: View {
     let systemName: String
     let size: CGFloat
+    let action: () -> Void
+
+    @State private var pressed = false
 
     var body: some View {
+        let side = size * 1.6
         Image(systemName: systemName)
             .font(.system(size: size, weight: .medium))
-            .foregroundStyle(.white)
-            .frame(width: size * 1.6, height: size * 1.6)
+            .foregroundStyle(.white.opacity(pressed ? 0.7 : 1))
+            .frame(width: side, height: side)
+            .background(Circle().fill(.white.opacity(pressed ? 0.18 : 0)))
+            .scaleEffect(pressed ? 0.86 : 1)
+            .animation(.spring(response: 0.24, dampingFraction: 0.6), value: pressed)
+            .contentShape(Circle())
+            .gesture(
+                // minimumDistance 0 so the press lands on mouse-down rather than on
+                // the first movement.
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in if !pressed { pressed = true } }
+                    .onEnded { value in
+                        pressed = false
+                        // Released off the glyph cancels, the way every other button
+                        // on the platform behaves.
+                        guard CGRect(x: 0, y: 0, width: side, height: side)
+                            .contains(value.location) else { return }
+                        action()
+                    }
+            )
     }
 }
 
