@@ -147,6 +147,23 @@ struct LockScreenClockView: View {
                 // was ruled out by testing: window opacity, background colour, level,
                 // collectionBehavior and canBecomeVisibleWithoutLogin all render the
                 // same.
+                if dateStyle != "off" {
+                    // Same glyph-outline glass as the numerals below — a plain Text
+                    // over them read as a different material sitting on the same
+                    // artwork. Tied to the time's size rather than fixed, so one
+                    // setting scales the whole block the way the iOS clock does.
+                    let date = TextShape(string: Self.dateString(ctx.date, dateStyle),
+                                         font: TextShape.clockFont(size: size * 0.2,
+                                                                   weight: .semibold))
+                    Color.clear
+                        .frame(width: date.size.width, height: date.size.height)
+                        // A heavier tint than the numerals get: these glyphs are a
+                        // fifth of the size, so there is far less area for the
+                        // refraction to read through.
+                        .glassEffect(Glass.clear.tint(.white.opacity(0.3)), in: date)
+                        .padding(.bottom, size * 0.06)
+                }
+
                 let digits = TextShape(string: Self.timeString(ctx.date, timeFormat),
                                        font: TextShape.clockFont(size: size, weight: .bold))
                 Color.clear
@@ -154,15 +171,6 @@ struct LockScreenClockView: View {
                     // Tinted, not bare .clear: over a bright sleeve clear glass has
                     // nothing to separate it from, and the time disappears.
                     .glassEffect(Glass.clear.tint(.white.opacity(0.12)), in: digits)
-                    .padding(.bottom, 6)
-
-                if dateStyle != "off" {
-                    Text(Self.dateString(ctx.date, dateStyle))
-                        // Tied to the time's size rather than fixed, so one setting
-                        // scales the whole block the way the iOS clock does.
-                        .font(.system(size: size * 0.2, weight: .medium, design: .rounded))
-                        .opacity(0.85)
-                }
             }
             .foregroundStyle(.white)
             // The artwork underneath can be any brightness — a drop shadow is
