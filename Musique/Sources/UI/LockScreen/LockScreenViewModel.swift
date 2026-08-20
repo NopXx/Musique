@@ -133,25 +133,21 @@ final class LockScreenViewModel: ObservableObject {
                     downloadedImage = NSImage(data: data)
                 }
             }
+            // A failed lookup comes back empty. Committing it wipes the cover the
+            // fullscreen backdrop is built from and leaves the bare palette
+            // gradient — hold the previous artwork instead, the same way the
+            // track-change path above deliberately does.
+            guard let paletteURL = result.artworkURL, !paletteURL.isEmpty else { return }
+            // Palette before the commit, so cover and palette land in one hop.
+            // Published apart, the new cover sits on the previous track's gradient
+            // for as long as the palette download runs. Cached per URL.
+            let palette = await ColorExtractor.shared.palette(for: paletteURL)
             await MainActor.run {
                 guard let self, self.lastArtworkKey == key else { return }
-                // A failed lookup comes back empty. Committing it wipes the cover the
-                // fullscreen backdrop is built from and leaves the bare palette
-                // gradient — hold the previous artwork instead, the same way the
-                // track-change path above deliberately does.
-                guard result.artworkURL != nil else { return }
                 self.artwork = result
                 self.artworkImage = downloadedImage
-                if let url = result.artworkURL, !url.isEmpty, url != self.lastPaletteURL {
-                    self.lastPaletteURL = url
-                    Task { [weak self] in
-                        let palette = await ColorExtractor.shared.palette(for: url)
-                        await MainActor.run {
-                            guard let self, self.lastPaletteURL == url else { return }
-                            self.palette = palette
-                        }
-                    }
-                }
+                self.lastPaletteURL = paletteURL
+                self.palette = palette
             }
         }
     }
@@ -162,16 +158,23 @@ final class LockScreenViewModel: ObservableObject {
     private func applyCustomArtwork(_ url: URL, for snap: NowPlayingSnapshot) {
         let urlStr = url.absoluteString
         let anim = CustomArtworkStore.shared.animationURLs(for: snap)
-        artwork = ArtworkResult(artworkURL: urlStr,
-                                animationURL: anim.square,
-                                animationTallURL: anim.tall)
-        artworkImage = NSImage(contentsOf: url)
-        guard urlStr != lastPaletteURL else { return }
-        lastPaletteURL = urlStr
+        let result = ArtworkResult(artworkURL: urlStr,
+                                   animationURL: anim.square,
+                                   animationTallURL: anim.tall)
+        let image = NSImage(contentsOf: url)
+        guard urlStr != lastPaletteURL else {
+            artwork = result
+            artworkImage = image
+            return
+        }
+        // Same pairing as the remote path above.
         Task { [weak self] in
             let palette = await ColorExtractor.shared.palette(for: urlStr)
             await MainActor.run {
-                guard let self, self.lastPaletteURL == urlStr else { return }
+                guard let self else { return }
+                self.artwork = result
+                self.artworkImage = image
+                self.lastPaletteURL = urlStr
                 self.palette = palette
             }
         }
