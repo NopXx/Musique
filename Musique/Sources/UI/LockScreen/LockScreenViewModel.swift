@@ -20,6 +20,7 @@ final class LockScreenViewModel: ObservableObject {
     @Published var clock: Bool = true
     @Published var clockFormat: String = "system"
     @Published var clockDateStyle: String = "full"
+    @Published var clockSize: Int = 96
 
     /// True while loginwindow's password panel is on screen. The fullscreen
     /// artwork covers it completely, so it fades for as long as the panel is up.
@@ -95,6 +96,8 @@ final class LockScreenViewModel: ObservableObject {
         clockFormat = format.isEmpty ? "system" : format
         let dateStyle = s.string(["lockscreen", "clock_date_style"])
         clockDateStyle = dateStyle.isEmpty ? "full" : dateStyle
+        let clockSizePt = s.int(["lockscreen", "clock_size"])
+        clockSize = clockSizePt > 0 ? clockSizePt : 96
     }
 
     private func handleTrackUpdate(_ snap: NowPlayingSnapshot?) {

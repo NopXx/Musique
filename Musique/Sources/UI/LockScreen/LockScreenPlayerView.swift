@@ -33,7 +33,8 @@ struct LockScreenPlayerView: View {
 
                         if viewModel.clock {
                             LockScreenClockView(timeFormat: viewModel.clockFormat,
-                                                dateStyle: viewModel.clockDateStyle)
+                                                dateStyle: viewModel.clockDateStyle,
+                                                size: CGFloat(viewModel.clockSize))
                                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                                 .padding(.top, CGFloat(viewModel.padding) + 56)
                                 .allowsHitTesting(false)
@@ -124,19 +125,31 @@ struct LockScreenPlayerView: View {
 struct LockScreenClockView: View {
     let timeFormat: String   // system | 24h | 12h
     let dateStyle: String    // full | short | off
+    let size: CGFloat        // point size of the time
 
     var body: some View {
         // Minute granularity: no seconds are shown, so one wake a minute is the
         // entire redraw budget this needs.
         TimelineView(.everyMinute) { ctx in
             VStack(spacing: 2) {
-                Text(Self.timeString(ctx.date, timeFormat))
-                    .font(.system(size: 82, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
+                // Glass in the glyph outlines, not in a box behind them — the iOS 26
+                // lock screen clock is the artwork seen *through* the numerals. Needs
+                // a real Shape, which is all TextShape is for; a Text can only ever
+                // carry glass as a frosted rectangle around itself.
+                let digits = TextShape(string: Self.timeString(ctx.date, timeFormat),
+                                       font: TextShape.clockFont(size: size, weight: .bold))
+                Color.clear
+                    .frame(width: digits.size.width, height: digits.size.height)
+                    // Tinted, not bare .clear: over a bright sleeve clear glass has
+                    // nothing to separate it from, and the time disappears.
+                    .glassEffect(Glass.clear.tint(.white.opacity(0.12)), in: digits)
+                    .padding(.bottom, 6)
 
                 if dateStyle != "off" {
                     Text(Self.dateString(ctx.date, dateStyle))
-                        .font(.system(size: 19, weight: .medium, design: .rounded))
+                        // Tied to the time's size rather than fixed, so one setting
+                        // scales the whole block the way the iOS clock does.
+                        .font(.system(size: size * 0.2, weight: .medium, design: .rounded))
                         .opacity(0.85)
                 }
             }
@@ -189,6 +202,8 @@ struct NowPlayingCard: View {
     let animatedArtwork: Bool
     let showInlineArtwork: Bool
     let onArtworkTap: () -> Void
+    /// Set only by the fullscreen views — the lock screen has nothing to collapse.
+    var onCollapse: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 12) {
@@ -218,6 +233,11 @@ struct NowPlayingCard: View {
                 if snap.isPlaying {
                     LockScreenWaveBars()
                 }
+
+                if let onCollapse {
+                    ControlGlyph(systemName: "arrow.down.right.and.arrow.up.left", size: 15)
+                        .onTapGesture { onCollapse() }
+                }
             }
 
             if showProgress && snap.duration > 0 {
@@ -237,9 +257,17 @@ struct NowPlayingCard: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
         .frame(width: width)
+        // Not inside a GlassEffectContainer, deliberately. A container hoists the
+        // glass its children declare into its own layer, and this card declares glass
+        // inside `.background(...)` — hoisted, it lands *over* the title, artist and
+        // transport instead of behind them, and the card renders as a grey blank.
+        // Nothing here would merge anyway: the only other glass on screen is the
+        // clock, half a screen away.
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.clear)
+                // Not .clear: the card's text and glyphs are all white, and clear
+                // glass over a white sleeve leaves them unreadable.
+                .fill(.black.opacity(0.35))
                 .glassEffect(
                     Glass.clear.tint(.white.opacity(0.05)),
                     in: RoundedRectangle(cornerRadius: 20, style: .continuous)

@@ -125,6 +125,7 @@ enum L10n {
     static var lockscreenClockFormat: String { tr("รูปแบบเวลา", "Time format") }
     static var lockscreenClockSystem: String { tr("ตามระบบ", "System") }
     static var lockscreenClockDate: String { tr("วันที่", "Date") }
+    static var lockscreenClockSize: String { tr("ขนาดตัวเลข", "Clock size") }
     static var lockscreenClockDateFull: String { tr("เต็ม", "Full") }
     static var lockscreenClockDateShort: String { tr("ย่อ", "Short") }
     static var lockscreenClockDateOff: String { tr("ไม่แสดง", "Off") }

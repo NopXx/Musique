@@ -90,6 +90,7 @@ final class SettingsStore: ObservableObject {
                 "clock": true,
                 "clock_format": "system",     // system | 24h | 12h
                 "clock_date_style": "full",   // full | short | off
+                "clock_size": 96,             // point size of the time; the date scales with it
             ],
         ]
     }

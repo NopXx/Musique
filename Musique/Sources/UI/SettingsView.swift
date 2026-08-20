@@ -52,6 +52,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var lockscreenClock: Bool
     @Published var lockscreenClockFormat: String
     @Published var lockscreenClockDateStyle: String
+    @Published var lockscreenClockSize: Double
 
     @Published var language: String
     @Published var launchAtLogin: Bool
@@ -122,6 +123,8 @@ final class SettingsViewModel: ObservableObject {
         self.lockscreenClockFormat = clockFormat.isEmpty ? "system" : clockFormat
         let clockDate = store.string(["lockscreen", "clock_date_style"])
         self.lockscreenClockDateStyle = clockDate.isEmpty ? "full" : clockDate
+        let clockSize = store.int(["lockscreen", "clock_size"])
+        self.lockscreenClockSize = Double(clockSize > 0 ? clockSize : 96)
 
         let lang = store.string(["language"])
         self.language = lang.isEmpty ? "th" : lang
@@ -337,6 +340,7 @@ final class SettingsViewModel: ObservableObject {
             "clock": lockscreenClock,
             "clock_format": lockscreenClockFormat,
             "clock_date_style": lockscreenClockDateStyle,
+            "clock_size": Int(lockscreenClockSize),
         ]])
     }
 
@@ -1156,6 +1160,19 @@ private struct LockscreenTab: View {
                             .labelsHidden()
                             .fixedSize()
                             .onChange(of: vm.lockscreenClockFormat) { _, _ in vm.saveLockscreen() }
+                        }
+
+                        CardRow(label: LocalizedStringKey(L10n.lockscreenClockSize)) {
+                            HStack(spacing: 10) {
+                                Slider(value: $vm.lockscreenClockSize, in: 48...220, step: 4)
+                                    .frame(width: 160)
+                                    .onChange(of: vm.lockscreenClockSize) { _, _ in vm.saveLockscreen() }
+                                Text("\(Int(vm.lockscreenClockSize))")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 28, alignment: .trailing)
+                            }
                         }
 
                         CardRow(label: LocalizedStringKey(L10n.lockscreenClockDate)) {

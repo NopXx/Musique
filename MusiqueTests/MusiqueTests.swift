@@ -223,4 +223,32 @@ final class MusiqueTests: XCTestCase {
         XCTAssertFalse(rule(artist: "TWICE (2015)").isNoOp)
         XCTAssertFalse(rule(track: "This Is For").isNoOp)
     }
+
+    /// The clock's glyph outlines come out of Core Text baseline-relative and y-up;
+    /// SwiftUI wants them y-down and centred in the rect it hands the Shape. Getting
+    /// that flip wrong renders the time upside down, which no build error catches.
+    func testTextShapeFillsItsRectRightWayUp() {
+        let shape = TextShape(string: "9:41", font: TextShape.clockFont(size: 96, weight: .light))
+        let size = shape.size
+        XCTAssertGreaterThan(size.width, size.height)   // wider than tall, always
+
+        let rect = CGRect(origin: .zero, size: size)
+        let box = shape.path(in: rect).boundingRect
+        XCTAssertEqual(box.midX, rect.midX, accuracy: 0.5)
+        XCTAssertEqual(box.midY, rect.midY, accuracy: 0.5)
+
+        // A "9" is a full-width bowl up top and a lone stem below, so the glyph is
+        // far wider near its top than near its bottom. Flipped, that inverts — which
+        // is the failure this guards, and one no build error would catch.
+        let nine = TextShape(string: "9", font: TextShape.clockFont(size: 96, weight: .light))
+        let unit = CGRect(origin: .zero, size: nine.size)
+        let path = nine.path(in: unit)
+        func inkWidth(at fraction: CGFloat) -> CGFloat {
+            let xs = stride(from: 0, to: unit.width, by: 0.5)
+                .filter { path.contains(CGPoint(x: $0, y: unit.height * fraction)) }
+            guard let first = xs.first, let last = xs.last else { return 0 }
+            return last - first
+        }
+        XCTAssertGreaterThan(inkWidth(at: 0.25), inkWidth(at: 0.9) * 1.2)
+    }
 }

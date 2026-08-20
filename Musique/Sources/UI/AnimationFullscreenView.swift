@@ -30,6 +30,10 @@ struct AnimationFullscreenView: View {
     private var showAlbum: Bool { settings.bool(["lockscreen", "show_album"]) }
     private var showProgress: Bool { settings.bool(["lockscreen", "show_progress"]) }
     private var padding: CGFloat { CGFloat(settings.int(["lockscreen", "padding"])) }
+    private var clockSize: CGFloat {
+        let pt = settings.int(["lockscreen", "clock_size"])
+        return CGFloat(pt > 0 ? pt : 96)
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -44,7 +48,8 @@ struct AnimationFullscreenView: View {
                 // Clock + date pinned to the top, over the artwork — the same block
                 // the lock screen draws. Gated on the same lockscreen.clock setting.
                 if clockEnabled {
-                    LockScreenClockView(timeFormat: clockFormat, dateStyle: clockDateStyle)
+                    LockScreenClockView(timeFormat: clockFormat, dateStyle: clockDateStyle,
+                                        size: clockSize)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .padding(.top, padding + 40)
                         .allowsHitTesting(false)
