@@ -3,6 +3,10 @@ import AppKit
 
 struct AnimationFullscreenView: View {
     @ObservedObject var viewModel: MiniPlayerViewModel
+    /// The mini player's overlay is a glance you dismiss with a click anywhere.
+    /// The desktop window owns a Space, so a stray click on a full screen of
+    /// cover art must not end it — there the corner button and Esc are the way out.
+    var dismissOnTap: Bool = false
     let onDismiss: () -> Void
 
     private var animationURL: URL? {
@@ -71,23 +75,105 @@ struct AnimationFullscreenView: View {
                         onArtworkTap: {}
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, padding)
+                    // Lifted off the bottom edge — the lock screen's own padding
+                    // sits the card lower than reads well on a full desktop.
+                    .padding(.bottom, padding + 56)
                 }
 
-                Text("กดเพื่อปิด")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.3))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, 12)
-                    .allowsHitTesting(false)
+                // Window chrome, not track chrome: leaving fullscreen belongs to
+                // the window, so it sits in its corner rather than inside the
+                // now-playing card.
+                GlassPill {
+                    FullscreenGlyph(systemName: "xmark", size: 15, action: onDismiss)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                if dismissOnTap {
+                    Text("กดเพื่อปิด")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.3))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .padding(.bottom, 12)
+                        .allowsHitTesting(false)
+                }
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { onDismiss() }
-        .onExitCommand { onDismiss() }
+        .onTapGesture { if dismissOnTap { onDismiss() } }
+        // Space toggles playback, the way every fullscreen player on the platform
+        // behaves. Needs focus to receive the key, and the ring would draw over the
+        // artwork — both windows are borderless-looking, so there is nothing for a
+        // ring to sit on anyway.
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.space) {
+            MusicAppController.playPause()
+            return .handled
+        }
+        // Esc goes through onKeyPress too, not onExitCommand: in a native-fullscreen
+        // window AppKit takes cancelOperation: for its own "leave fullscreen", so the
+        // SwiftUI hook never sees the key.
+        .onKeyPress(.escape) {
+            onDismiss()
+            return .handled
+        }
         .onChange(of: viewModel.snapshot?.hasTrack ?? false) { _, hasTrack in
             if !hasTrack { onDismiss() }
         }
     }
 
+}
+
+/// The card's glass, reused for the corner control so the window chrome matches
+/// the thing it frames.
+private struct GlassPill<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(.black.opacity(0.35))
+                    .glassEffect(Glass.clear.tint(.white.opacity(0.05)), in: Capsule(style: .continuous))
+                    .opacity(0.6)
+            )
+    }
+}
+
+/// `ControlGlyph` in LockScreenPlayerView is private to that file; this is the
+/// same press behaviour for the chrome.
+private struct FullscreenGlyph: View {
+    let systemName: String
+    let size: CGFloat
+    let action: () -> Void
+
+    @State private var pressed = false
+
+    var body: some View {
+        let side = size * 1.6
+        Image(systemName: systemName)
+            .font(.system(size: size, weight: .medium))
+            .foregroundStyle(.white.opacity(pressed ? 0.7 : 1))
+            .frame(width: side, height: side)
+            .background(Circle().fill(.white.opacity(pressed ? 0.18 : 0)))
+            .scaleEffect(pressed ? 0.86 : 1)
+            .animation(.spring(response: 0.24, dampingFraction: 0.6), value: pressed)
+            .contentShape(Circle())
+            .gesture(
+                // minimumDistance 0 so the press lands on mouse-down. Fires the
+                // action itself rather than pairing with onTapGesture — a
+                // zero-distance drag swallows the tap.
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in if !pressed { pressed = true } }
+                    .onEnded { value in
+                        pressed = false
+                        guard CGRect(x: 0, y: 0, width: side, height: side)
+                            .contains(value.location) else { return }
+                        action()
+                    }
+            )
+    }
 }
