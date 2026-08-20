@@ -33,6 +33,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if showInDock { NSApp.activate() }
     }
 
+    /// Native fullscreen from an `.accessory` app is unreliable — go `.regular`
+    /// while the desktop fullscreen window is up. `applyDockVisibility()` puts
+    /// the policy back from the setting when it closes, so nothing to remember.
+    static func setRegularPolicyForFullscreen() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
         AppDelegate.applyDockVisibility()
@@ -82,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "playpause":  MusicAppController.playPause()
         case "next":       MusicAppController.next()
         case "previous":   MusicAppController.previous()
+        case "fullscreen": menuBarController?.toggleDesktopFullscreen()
         default: break
         }
         playerMonitor.refresh()

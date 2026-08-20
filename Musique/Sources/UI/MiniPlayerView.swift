@@ -120,6 +120,8 @@ struct MiniPlayerView: View {
                         sourceMenuButton()
                         footerButton(icon: "pencil", action: openEdit)
                             .disabled(viewModel.snapshot?.hasTrack != true)
+                        footerButton(icon: fullscreenIcon, action: openDesktopFullscreen)
+                            .disabled(viewModel.snapshot?.hasTrack != true)
                         footerButton(icon: "gearshape.fill", action: openSettings)
                         footerButton(icon: viewModel.notificationsEnabled ? "bell.fill" : "bell.slash.fill",
                                      active: viewModel.notificationsEnabled,
@@ -251,6 +253,8 @@ struct MiniPlayerView: View {
             Spacer()
             sourceMenuButton()
             iconButton("pencil", action: openEdit)
+                .disabled(viewModel.snapshot?.hasTrack != true)
+            iconButton(fullscreenIcon, action: openDesktopFullscreen)
                 .disabled(viewModel.snapshot?.hasTrack != true)
             iconButton("gearshape.fill", action: openSettings)
             iconButton(viewModel.notificationsEnabled ? "bell.fill" : "bell.slash.fill",
@@ -491,6 +495,8 @@ struct MiniPlayerView: View {
                 sourceMenuButton()
                 footerButton(icon: "pencil", action: openEdit)
                     .disabled(viewModel.snapshot?.hasTrack != true)
+                footerButton(icon: fullscreenIcon, action: openDesktopFullscreen)
+                    .disabled(viewModel.snapshot?.hasTrack != true)
                 footerButton(icon: "gearshape.fill", action: openSettings)
                 footerButton(icon: viewModel.notificationsEnabled ? "bell.fill" : "bell.slash.fill",
                              active: viewModel.notificationsEnabled,
@@ -608,6 +614,18 @@ struct MiniPlayerView: View {
     private func openSettings() { AppDelegate.shared?.openSettings() }
     private func quit() { NSApp.terminate(nil) }
     private func openEdit() { showEditPopover = true }
+    /// Icon flips while the desktop fullscreen Space is up, so the same button
+    /// reads as the way back out.
+    private var fullscreenIcon: String {
+        AppDelegate.shared?.menuBarController?.desktopFullscreenPresented == true
+            ? "arrow.down.right.and.arrow.up.left"
+            : "arrow.up.left.and.arrow.down.right"
+    }
+
+    private func openDesktopFullscreen() {
+        AppDelegate.shared?.menuBarController?.toggleDesktopFullscreen()
+    }
+
     private func openFullscreenAnimation() {
         guard viewModel.animationFullscreenEnabled,
               hasAnimation else { return }
