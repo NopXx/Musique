@@ -282,6 +282,12 @@ struct AnimatedArtworkView: NSViewRepresentable {
                     .applyingGaussianBlur(sigma: Double(mirrorBlur * scale / 2))
                     .cropped(to: frame)
             }
+            // The margins have to stop reading as a picture. Blurred but still bright
+            // and still legible as *forms*, they compete with the cover; dimmed a stop
+            // short of a quarter they fall back to colour and light, which is what the
+            // iPad's margins are. ponytail: a flat dim, not a vignette — the gradient
+            // is barely visible under this much blur and costs another filter pass.
+            image = image.applyingFilter("CIExposureAdjust", parameters: [kCIInputEVKey: -0.35])
             return ciContext.createCGImage(image, from: image.extent)
         }
 

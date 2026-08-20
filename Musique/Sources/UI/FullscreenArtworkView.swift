@@ -41,7 +41,7 @@ struct FullscreenArtworkView: View {
     /// How soft the mirrored margins are. Enough to read as backdrop rather than as a
     /// second copy of the cover, not so much that the movement stops registering —
     /// which is the whole reason they are video and not a still.
-    private let mirrorBlur: CGFloat = 40
+    private let mirrorBlur: CGFloat = 50
 
     @State private var loadedImage: NSImage?
 
