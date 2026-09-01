@@ -91,6 +91,10 @@ final class SettingsStore: ObservableObject {
                 "clock_format": "system",     // system | 24h | 12h
                 "clock_date_style": "full",   // full | short | off
                 "clock_size": 96,             // point size of the time; the date scales with it
+                // Synced lyrics over the fullscreen artwork. No Settings row: the
+                // fullscreen window's own toggle writes this, which is the only
+                // place it means anything.
+                "lyrics": true,
             ],
         ]
     }

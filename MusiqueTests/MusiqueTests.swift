@@ -11,6 +11,49 @@ final class MusiqueTests: XCTestCase {
         XCTAssertTrue(snap.hasTrack)
     }
 
+    /// LRC is the only format the lyrics view can drive, and every field of it
+    /// comes off a string: metadata tags must drop out, a repeated line must
+    /// yield one entry per timestamp, and the result must come back in order.
+    func testLRCParse() {
+        let lrc = """
+        [ar:Some Artist]
+        [length:03:05]
+        [00:12.50]first cue
+        [00:20.00][01:40.25]repeated cue
+        [00:31.75]
+        """
+        let lines = LRC.parse(lrc)
+        XCTAssertEqual(lines.map(\.time), [12.5, 20, 31.75, 100.25])
+        XCTAssertEqual(lines.map(\.text), ["first cue", "repeated cue", "", "repeated cue"])
+    }
+
+    /// LRCLIB's `lyricsfile` is YAML, parsed by hand at the one shape it emits:
+    /// the `lines:` list only, quoted and bare scalars both, stopping before the
+    /// `plain:` block so its indented body can't be mistaken for more lines.
+    func testLyricsFileParse() {
+        let yaml = """
+        version: '1.0'
+        metadata:
+          title: Some Song
+        lines:
+        - text: first cue
+          start_ms: 3090
+          end_ms: 5270
+        - text: ''
+          start_ms: 5270
+          end_ms: 8950
+        - text: 'it''s quoted'
+          start_ms: 8950
+        plain: |-
+          first cue
+          it's quoted
+        """
+        let lines = LyricsFile.parse(yaml)
+        XCTAssertEqual(lines.map(\.text), ["first cue", "", "it's quoted"])
+        XCTAssertEqual(lines.map(\.time), [3.09, 5.27, 8.95])
+        XCTAssertEqual(lines.map(\.end), [5.27, 8.95, nil])
+    }
+
     /// The wallpaper-store rewrite must re-point every Desktop node at our
     /// extension while leaving Idle (screen-saver) nodes untouched.
     func testWallpaperRewriteTargetsDesktopOnly() {
