@@ -51,7 +51,7 @@ final class AnimationFullscreenController {
         win.hidesOnDeactivate = false
         win.animationBehavior = .none
 
-        let rootView = AnimationFullscreenView(viewModel: viewModel) { [weak self] in
+        let rootView = AnimationFullscreenView(viewModel: viewModel, dismissOnTap: true) { [weak self] in
             self?.viewModel.showFullscreenAnimation = false
         }
         let host = NSHostingController(rootView: rootView)

@@ -31,6 +31,18 @@ enum MotionWallpaperStore {
     /// `MusiqueWallpaperExtension`.
     static let switchNotification = "com.nopxx.musique.wallpaper.switch"
 
+    /// Fill Screen — what every `setDesktopImageURL` of ours must pass. An empty
+    /// options dict resets the display's scaling to AppKit's default, so a restore
+    /// showed the user's picture stretched for the second or two until
+    /// WallpaperAgent re-projected the real placement from the store.
+    // ponytail: Fill Screen for everything rather than reading each display's own
+    // placement out of the store — the odd Fit/Tile setup still self-corrects on
+    // the plist rewrite, same as today.
+    static let fillScreenOptions: [NSWorkspace.DesktopImageOptionKey: Any] = [
+        .imageScaling: NSImageScaling.scaleProportionallyUpOrDown.rawValue,
+        .allowClipping: true,
+    ]
+
     // MARK: Staging
 
     /// Staging dir inside the shared app-group container — the one place both the
@@ -321,7 +333,7 @@ enum MotionWallpaperStore {
                     continue
                 }
                 do {
-                    try NSWorkspace.shared.setDesktopImageURL(url, for: screen)
+                    try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: fillScreenOptions)
                     storeLog.info("restore: set desktop image via AppKit — \(url.lastPathComponent, privacy: .public)")
                 } catch {
                     storeLog.error("restore: setDesktopImageURL failed — \(error.localizedDescription, privacy: .public)")

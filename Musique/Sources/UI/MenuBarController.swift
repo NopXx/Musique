@@ -15,6 +15,7 @@ final class MenuBarController {
     private let playerMonitor: PlayerMonitor
     private let viewModel: MiniPlayerViewModel
     private let animationFullscreenController: AnimationFullscreenController
+    private let desktopFullscreenController: DesktopFullscreenController
     private var cancellables = Set<AnyCancellable>()
 
     private var dynamicIslandModel: MenuBarDynamicIslandModel?
@@ -29,6 +30,7 @@ final class MenuBarController {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.popover = NSPopover()
         self.animationFullscreenController = AnimationFullscreenController(viewModel: self.viewModel)
+        self.desktopFullscreenController = DesktopFullscreenController(viewModel: self.viewModel)
         self.popover.behavior = .transient
         self.popover.contentSize = NSSize(width: 320, height: 505)
         self.popover.contentViewController = NSHostingController(rootView: MiniPlayerView(viewModel: viewModel))
@@ -151,6 +153,13 @@ final class MenuBarController {
         menu.addItem(quit)
         return menu
     }
+
+    /// Driven by the mini player's fullscreen button and `musique://fullscreen`.
+    func toggleDesktopFullscreen() {
+        desktopFullscreenController.toggle()
+    }
+
+    var desktopFullscreenPresented: Bool { desktopFullscreenController.isPresented }
 
     @objc private func handleButtonClick() {
         // In dynamic-island style, a left-click landing on the play/pause icon

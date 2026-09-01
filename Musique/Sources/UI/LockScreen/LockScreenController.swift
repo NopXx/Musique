@@ -16,25 +16,75 @@ final class LockScreenController {
     private var fillerWindows: [LockScreenWindow] = []
     private var cancellables = Set<AnyCancellable>()
     private var isLocked = false
-    /// The screen saver runs above everything, including the lock UI and our
-    /// SkyLight-pinned windows. Tracked separately from `isLocked` because the
-    /// two are independent: the saver can run unlocked, and locking *through* the
-    /// saver delivers `screenIsLocked` before, during or after it starts.
-    private var isScreensaverActive = false
     private var raiseTimer: Timer?
     private var lastWallpaperKey: String?
     /// Motion (video) desktop wallpaper driver — separate opt-in from the
     /// static-image path in `syncWallpaper`. Auto-swaps with the track.
     private let motionWallpaper = MotionWallpaperController()
-    /// Last-seen `set_system_wallpaper` value, to detect a live toggle from the
-    /// on-lock card and rebuild windows (draw-own-background ⇄ desktop artwork).
-    private var lastWallpaperMode: Bool?
+
+    /// The desktop-wallpaper takeover — `SystemWallpaperOperator`,
+    /// `MotionWallpaperController`, the `MusiqueWallpaper` appex — is off. The
+    /// SkyLight overlay draws the fullscreen artwork itself now, so hijacking the
+    /// real desktop bought nothing and cost a WallpaperAgent bounce, an
+    /// `Index.plist` rewrite, and a whole class of stuck-wallpaper bugs.
+    ///
+    /// This gates *activation only*. `MotionWallpaperStore.healIfStuck()`,
+    /// `SystemWallpaperOperator.recoverIfNeeded()` and the willTerminate restore
+    /// stay unconditional — a desktop an older build left hijacked still has to be
+    /// handed back.
+    ///
+    /// ponytail: a constant, not a setting, so re-enabling is a one-word edit.
+    /// Ceiling — if the overlay is still the only path at the next release, delete
+    /// `Sources/Wallpaper/`, `SystemWallpaperOperator` and the MusiqueWallpaper
+    /// target outright.
+    private static let wallpaperTakeoverEnabled = false
+
+    /// True when the user is at the machine and loginwindow's password panel is
+    /// (about to be) on screen. The fullscreen artwork covers it completely, so it
+    /// fades while this holds.
+    ///
+    /// ponytail: driven by the screen saver stopping/starting, which is the only
+    /// "the user just touched this machine" signal we get while locked.
+    /// `com.apple.screenLockUIIsShown` looks like the right notification and isn't
+    /// — it fires ~1s after every lock and its `…IsHidden` partner only fires at
+    /// unlock, so it means "the lock screen is up", not "the password panel is up".
+    /// Wiring the fade to it made the window click-through for the whole lock
+    /// session and the enlarge tap never landed. Ceiling: if the saver is off
+    /// entirely the fade never fires — click-anywhere-to-shrink and blind typing
+    /// still unlock, they're just the only ways.
+    private var lockUIVisible = false {
+        didSet {
+            guard lockUIVisible != oldValue else { return }
+            viewModel.lockUIVisible = lockUIVisible
+            applyMouseTransparency()
+        }
+    }
+
+    /// Hand the mouse to loginwindow while the artwork is up but faded. A window
+    /// that isn't ignoring the mouse swallows the click even where it draws
+    /// nothing — AppKit hit-tests by frame, not by pixel alpha, so
+    /// `allowsHitTesting(false)` in the view would make the click vanish rather
+    /// than reach the password field.
+    ///
+    /// Gated on `isLargeArtwork` as well: with nothing covering the screen there is
+    /// nothing to see past, and going click-through would only kill the card's own
+    /// taps — which is exactly how the enlarge stopped working.
+    ///
+    /// The keyboard needs nothing: `LockScreenWindow` is borderless, so
+    /// `canBecomeKey` is false and focus never leaves loginwindow. That's this
+    /// feature's safety valve — even if the fade never fires, the user can type
+    /// their password blind and press Return. Covering the field is never a lockout.
+    private func applyMouseTransparency() {
+        let clickThrough = lockUIVisible && viewModel.isLargeArtwork
+        for window in playerWindows { window.ignoresMouseEvents = clickThrough }
+    }
 
     init(playerMonitor: PlayerMonitor) {
         self.playerMonitor = playerMonitor
         self.viewModel = LockScreenViewModel(monitor: playerMonitor)
 
         // Recover any desktop a prior session left stuck on our wallpaper provider.
+        // Runs unconditionally — see `wallpaperTakeoverEnabled`.
         MotionWallpaperStore.healIfStuck()
 
         // The overlay draws its own video copy until the real desktop is playing
@@ -92,15 +142,7 @@ final class LockScreenController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                let mode = SettingsStore.shared.bool(["lockscreen", "set_system_wallpaper"])
-                let flipped = self.isLocked && mode != self.lastWallpaperMode
-                // On an on/off flip, capture the current desktop as the outgoing
-                // image *before* syncWallpaper swaps it, then crossfade to hide
-                // the instant swap.
-                let outgoing = flipped ? self.currentDesktopImage() : nil
                 self.syncWallpaper()
-                if flipped, let outgoing { self.startCrossfade(from: outgoing) }
-                self.lastWallpaperMode = mode
                 self.syncMotionWallpaper()
                 self.evaluateVisibility()
             }
@@ -141,18 +183,24 @@ final class LockScreenController {
             .sink { [weak self] _ in self?.syncWallpaper() }
             .store(in: &cancellables)
 
-        // Both wallpapers are coupled to the thumbnail tap (enlarge state), so
-        // activate/restore them as that flips.
         viewModel.$isLargeArtwork
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.syncWallpaper()
-                self?.syncMotionWallpaper()
+            .sink { [weak self] large in
+                guard let self else { return }
+                self.log.info("isLargeArtwork -> \(large) (lockUIVisible:\(self.lockUIVisible))")
+                // The tap is the user saying "show me the artwork" — it overrides a
+                // stale fade rather than enlarging into an invisible layer.
+                if large { self.lockUIVisible = false }
+                self.applyMouseTransparency()
+                self.syncWallpaper()
+                self.syncMotionWallpaper()
             }
             .store(in: &cancellables)
 
         // Restore the user's wallpaper on quit, and recover it if a previous
-        // session died mid-playback.
+        // session died mid-playback. Deliberately NOT behind
+        // `wallpaperTakeoverEnabled`: an older build may have left the desktop
+        // hijacked, and only this hands it back.
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -163,6 +211,7 @@ final class LockScreenController {
                 self?.motionWallpaper.disableIfActive(blocking: true)
             }
         }
+        // Also unconditional, and for the same reason as `healIfStuck` above.
         SystemWallpaperOperator.shared.recoverIfNeeded()
 
         log.info("LockScreenController initialised")
@@ -177,27 +226,37 @@ final class LockScreenController {
     @objc private func handleScreenLocked() {
         log.info("DistributedNotification: screenIsLocked")
         isLocked = true
+        lockUIVisible = false   // a fresh lock starts clean
         syncWallpaper()
         prewarmWallpaper()
         syncMotionWallpaper()
         evaluateVisibility()
     }
 
-    /// Give the screen up to the saver rather than fighting it: it draws above
-    /// our windows, so raising them just burns the raise loop. The overlay comes
-    /// back when the saver stops, if we're still locked.
+    /// macOS 26 unifies the screen saver with the lock screen: the saver *is* the
+    /// locked background, and our SkyLight overlay draws on it exactly as on the
+    /// plain lock screen. So don't tear the overlay down for the saver (the old
+    /// legacy-macOS behaviour, where the saver drew above everything) — keep it up
+    /// and fight to stay raised, like the lock UI appearing.
     @objc private func handleScreensaverStarted() {
         log.info("DistributedNotification: screensaver.didstart")
-        isScreensaverActive = true
-        dismiss()
+        guard isLocked else { return }
+        // The machine went idle — nobody is looking at a password field, so put
+        // the artwork back.
+        lockUIVisible = false
+        evaluateVisibility()
+        raiseAllWindows()
+        startRaiseLoop()
     }
 
     @objc private func handleScreensaverStopped() {
         log.info("DistributedNotification: screensaver.didstop — locked:\(self.isLocked)")
-        isScreensaverActive = false
         // Dismissing the saver while locked hands the screen back to the lock UI,
         // which draws over us on the way in — same situation as a fresh lock.
         guard isLocked else { return }
+        // Somebody woke the machine, so the password panel is what they want to
+        // see, not the artwork. Fade until they tap or it idles out again.
+        lockUIVisible = true
         evaluateVisibility()
         raiseAllWindows()
         startRaiseLoop()
@@ -206,9 +265,7 @@ final class LockScreenController {
     @objc private func handleScreenUnlocked() {
         log.info("DistributedNotification: screenIsUnlocked")
         isLocked = false
-        // Unlocking always tears the saver down, and a missed didstop would
-        // otherwise keep the overlay suppressed for the rest of the session.
-        isScreensaverActive = false
+        lockUIVisible = false
         stopRaiseLoop()
         dismiss()
         viewModel.isLargeArtwork = false   // clear tap state so next lock starts fresh
@@ -223,6 +280,11 @@ final class LockScreenController {
     /// `force` re-applies even when the artwork hasn't changed — used after a
     /// motion restore has painted the user's wallpaper over ours.
     private func syncWallpaper(force: Bool = false) {
+        // Returning empty is safe: with the takeover off nothing in this session
+        // can ever have put artwork on the desktop, so there is nothing of ours to
+        // restore either. Cross-session leftovers are handled by
+        // `recoverIfNeeded()` at init and by the willTerminate restore.
+        guard Self.wallpaperTakeoverEnabled else { return }
         let op = SystemWallpaperOperator.shared
         if force {
             lastWallpaperKey = nil
@@ -248,6 +310,17 @@ final class LockScreenController {
             if lastWallpaperKey != nil { op.restore(); lastWallpaperKey = nil }
             return
         }
+        // A motion track's desktop belongs to the *motion* wallpaper. Putting the
+        // still on the real desktop here as well raced the motion store rewrite: a
+        // late setDesktopImageURL landed after WallpaperAgent respawned and knocked
+        // the video back off, leaving the still frozen there. The overlay draws its
+        // own blurred cover until the video is live, so nothing of ours needs to
+        // touch the real desktop meanwhile — stand the still down and let motion own
+        // it. Same gate the motion path activates on (feature on + animated URL).
+        if SettingsStore.shared.bool(["lockscreen", "set_system_wallpaper"]), trackHasMotionArtwork {
+            if lastWallpaperKey != nil { op.standDown(); lastWallpaperKey = nil }
+            return
+        }
         let blur = SettingsStore.shared.int(["lockscreen", "background_blur"])
         // Key on artwork + blur so the 1 Hz position tick doesn't re-apply
         // on every snapshot update.
@@ -262,35 +335,25 @@ final class LockScreenController {
         }
     }
 
+    /// Whether the current track has animated artwork — the same URLs the motion
+    /// wallpaper drives from, so the still knows when to yield the desktop to it.
+    private var trackHasMotionArtwork: Bool {
+        let a = viewModel.artwork
+        return (a.animationSquareUltraURL ?? a.animationURL ?? a.animationTallURL) != nil
+    }
+
     /// Reconcile the motion (video) wallpaper. Coupled to the enlarge/tap state
     /// like the static wallpaper: it activates only while locked AND the user has
     /// tapped the now-playing thumbnail (`isLargeArtwork`), and restores on shrink
     /// or unlock — so entering the lock screen doesn't silently replace the
     /// wallpaper before the user asks for it.
     private func syncMotionWallpaper() {
+        guard Self.wallpaperTakeoverEnabled else { return }
         guard isLocked, viewModel.isLargeArtwork else {
             motionWallpaper.disableIfActive()
             return
         }
         motionWallpaper.sync(artwork: viewModel.artwork, hasTrack: playerMonitor.snapshot?.hasTrack == true)
-    }
-
-    /// The current real desktop wallpaper of the main screen as an image, used
-    /// as the outgoing frame of a crossfade.
-    private func currentDesktopImage() -> NSImage? {
-        guard let screen = NSScreen.main,
-              let url = NSWorkspace.shared.desktopImageURL(for: screen) else { return nil }
-        return NSImage(contentsOf: url)
-    }
-
-    /// Show `image` full-screen over the just-swapped desktop, then fade it out —
-    /// masking the un-animatable `setDesktopImageURL` with a crossfade.
-    private func startCrossfade(from image: NSImage) {
-        viewModel.crossfadeImage = image
-        // Let the cover frame render, then fade it away to reveal the new desktop.
-        DispatchQueue.main.async {
-            withAnimation(.easeInOut(duration: 0.5)) { self.viewModel.crossfadeImage = nil }
-        }
     }
 
     /// Pre-render the wallpaper file while locked so the enlarge-tap swap is
@@ -301,6 +364,7 @@ final class LockScreenController {
         // being off, exactly backwards, so the tap paid for the whole blur+encode
         // and the wallpaper landed seconds late. With it off nothing ever reaches
         // the desktop, so there is nothing to warm.
+        guard Self.wallpaperTakeoverEnabled else { return }
         guard isLocked,
               SettingsStore.shared.bool(["lockscreen", "set_system_wallpaper"]),
               playerMonitor.snapshot?.hasTrack == true,
@@ -311,11 +375,11 @@ final class LockScreenController {
     }
 
     @objc private func handleLockUIShown() {
-        guard !isScreensaverActive else {
-            log.info("DistributedNotification: screenLockUIIsShown — screen saver up, not raising")
-            return
-        }
         log.info("DistributedNotification: screenLockUIIsShown — re-raising window")
+        // Deliberately does NOT drive `lockUIVisible` — see its doc comment. This
+        // fires right after every lock, so fading here blanked the artwork and made
+        // the window click-through for the entire lock session.
+        evaluateVisibility()
         raiseAllWindows()
         startRaiseLoop()
     }
@@ -336,7 +400,7 @@ final class LockScreenController {
     }
 
     private func evaluateVisibility() {
-        guard isLocked, !isScreensaverActive else { return }
+        guard isLocked else { return }
         let s = SettingsStore.shared
         let enabled = s.bool(["lockscreen", "enabled"])
         let hasTrack = playerMonitor.snapshot?.hasTrack == true
@@ -362,6 +426,8 @@ final class LockScreenController {
             playerHost.view.frame = NSRect(origin: .zero, size: screen.frame.size)
             playerWindow.contentViewController = playerHost
             playerWindow.setFrame(screen.frame, display: true)
+            // A rebuild can land mid-fade, so new windows inherit the state.
+            playerWindow.ignoresMouseEvents = lockUIVisible && viewModel.isLargeArtwork
             SkyLightOperator.shared.promoteAboveLockScreen(playerWindow)
             playerWindow.makeKeyAndOrderFront(nil)
             playerWindows.append(playerWindow)

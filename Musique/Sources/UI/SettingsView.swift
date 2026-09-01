@@ -42,10 +42,17 @@ final class SettingsViewModel: ObservableObject {
     @Published var lockscreenShowProgress: Bool
     @Published var lockscreenAnimatedArtwork: Bool
     @Published var lockscreenBackgroundBlur: Double
-    @Published var lockscreenBackgroundStyle: String
     @Published var lockscreenPadding: Int
     @Published var lockscreenScreens: String
+    /// ponytail: kept without a UI row — the desktop-wallpaper takeover is off
+    /// behind `LockScreenController.wallpaperTakeoverEnabled`, and leaving the
+    /// property/load/save intact makes re-enabling a pure revert without churning
+    /// anyone's settings.json.
     @Published var lockscreenSetSystemWallpaper: Bool
+    @Published var lockscreenClock: Bool
+    @Published var lockscreenClockFormat: String
+    @Published var lockscreenClockDateStyle: String
+    @Published var lockscreenClockSize: Double
 
     @Published var language: String
     @Published var launchAtLogin: Bool
@@ -106,13 +113,18 @@ final class SettingsViewModel: ObservableObject {
         self.lockscreenAnimatedArtwork = store.bool(["lockscreen", "animated_artwork"])
         let blur = store.int(["lockscreen", "background_blur"])
         self.lockscreenBackgroundBlur = Double(blur > 0 ? blur : 60)
-        let bgStyle = store.string(["lockscreen", "background_style"])
-        self.lockscreenBackgroundStyle = bgStyle.isEmpty ? "mesh_gradient" : bgStyle
         let pad = store.int(["lockscreen", "padding"])
         self.lockscreenPadding = pad > 0 ? pad : 32
         let scr = store.string(["lockscreen", "screens"])
         self.lockscreenScreens = scr.isEmpty ? "main" : scr
         self.lockscreenSetSystemWallpaper = store.bool(["lockscreen", "set_system_wallpaper"])
+        self.lockscreenClock = store.bool(["lockscreen", "clock"])
+        let clockFormat = store.string(["lockscreen", "clock_format"])
+        self.lockscreenClockFormat = clockFormat.isEmpty ? "system" : clockFormat
+        let clockDate = store.string(["lockscreen", "clock_date_style"])
+        self.lockscreenClockDateStyle = clockDate.isEmpty ? "full" : clockDate
+        let clockSize = store.int(["lockscreen", "clock_size"])
+        self.lockscreenClockSize = Double(clockSize > 0 ? clockSize : 96)
 
         let lang = store.string(["language"])
         self.language = lang.isEmpty ? "th" : lang
@@ -322,10 +334,13 @@ final class SettingsViewModel: ObservableObject {
             "show_progress": lockscreenShowProgress,
             "animated_artwork": lockscreenAnimatedArtwork,
             "background_blur": Int(lockscreenBackgroundBlur),
-            "background_style": lockscreenBackgroundStyle,
             "padding": lockscreenPadding,
             "screens": lockscreenScreens,
             "set_system_wallpaper": lockscreenSetSystemWallpaper,
+            "clock": lockscreenClock,
+            "clock_format": lockscreenClockFormat,
+            "clock_date_style": lockscreenClockDateStyle,
+            "clock_size": Int(lockscreenClockSize),
         ]])
     }
 
@@ -1083,10 +1098,6 @@ private struct LockscreenTab: View {
                     SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenAnimArtwork),
                                       isOn: $vm.lockscreenAnimatedArtwork)
                         .onChange(of: vm.lockscreenAnimatedArtwork) { _, _ in vm.saveLockscreen() }
-
-                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenSystemWallpaper),
-                                      isOn: $vm.lockscreenSetSystemWallpaper)
-                        .onChange(of: vm.lockscreenSetSystemWallpaper) { _, _ in vm.saveLockscreen() }
                 }
 
                 SettingsCard(
@@ -1126,6 +1137,57 @@ private struct LockscreenTab: View {
                         .onChange(of: vm.lockscreenScreens) { _, _ in vm.saveLockscreen() }
                     }
 
+                }
+
+                SettingsCard(
+                    icon: "clock",
+                    iconTint: .teal,
+                    title: LocalizedStringKey(L10n.lockscreenClockTitle)
+                ) {
+                    SettingsToggleRow(label: LocalizedStringKey(L10n.lockscreenClockShow),
+                                      isOn: $vm.lockscreenClock)
+                        .onChange(of: vm.lockscreenClock) { _, _ in vm.saveLockscreen() }
+
+                    // Only the pickers grey out — disabling the whole card would
+                    // take the toggle above with it and there'd be no way back on.
+                    Group {
+                        CardRow(label: LocalizedStringKey(L10n.lockscreenClockFormat)) {
+                            Picker("", selection: $vm.lockscreenClockFormat) {
+                                Text(L10n.lockscreenClockSystem).tag("system")
+                                Text(verbatim: "24h").tag("24h")
+                                Text(verbatim: "12h").tag("12h")
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            .onChange(of: vm.lockscreenClockFormat) { _, _ in vm.saveLockscreen() }
+                        }
+
+                        CardRow(label: LocalizedStringKey(L10n.lockscreenClockSize)) {
+                            HStack(spacing: 10) {
+                                Slider(value: $vm.lockscreenClockSize, in: 48...220, step: 4)
+                                    .frame(width: 160)
+                                    .onChange(of: vm.lockscreenClockSize) { _, _ in vm.saveLockscreen() }
+                                Text("\(Int(vm.lockscreenClockSize))")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 28, alignment: .trailing)
+                            }
+                        }
+
+                        CardRow(label: LocalizedStringKey(L10n.lockscreenClockDate)) {
+                            Picker("", selection: $vm.lockscreenClockDateStyle) {
+                                Text(L10n.lockscreenClockDateFull).tag("full")
+                                Text(L10n.lockscreenClockDateShort).tag("short")
+                                Text(L10n.lockscreenClockDateOff).tag("off")
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            .onChange(of: vm.lockscreenClockDateStyle) { _, _ in vm.saveLockscreen() }
+                        }
+                    }
+                    .disabled(!vm.lockscreenClock)
+                    .opacity(vm.lockscreenClock ? 1.0 : 0.45)
                 }
 
             }

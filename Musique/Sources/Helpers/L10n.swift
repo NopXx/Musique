@@ -120,6 +120,15 @@ enum L10n {
     static var lockscreenScreenPicker: String { tr("จอที่แสดง", "Display on") }
     static var lockscreenMainOnly: String { tr("จอหลักเท่านั้น", "Main display only") }
     static var lockscreenAllScreens: String { tr("ทุกจอ", "All displays") }
+    static var lockscreenClockTitle: String { tr("นาฬิกา", "Clock") }
+    static var lockscreenClockShow: String { tr("แสดงนาฬิกาบน artwork เต็มจอ", "Show clock over fullscreen artwork") }
+    static var lockscreenClockFormat: String { tr("รูปแบบเวลา", "Time format") }
+    static var lockscreenClockSystem: String { tr("ตามระบบ", "System") }
+    static var lockscreenClockDate: String { tr("วันที่", "Date") }
+    static var lockscreenClockSize: String { tr("ขนาดตัวเลข", "Clock size") }
+    static var lockscreenClockDateFull: String { tr("เต็ม", "Full") }
+    static var lockscreenClockDateShort: String { tr("ย่อ", "Short") }
+    static var lockscreenClockDateOff: String { tr("ไม่แสดง", "Off") }
 
     // MARK: - Edit Rules
 

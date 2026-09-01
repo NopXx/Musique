@@ -148,30 +148,27 @@ final class MiniPlayerViewModel: ObservableObject {
         let title = snap.title, artist = snap.artist, album = snap.album
         Task { [weak self] in
             let result = await ArtworkService.shared.lookup(title: title, artist: artist, album: album)
+            // Empty means the lookup failed; keep whatever is on screen rather
+            // than clearing it, which is the same call the code above makes.
+            guard let url = result.artworkURL, !url.isEmpty else { return }
+            // The palette is fetched *before* the artwork is published, and the two
+            // land in the same main-actor hop. Published apart, the new cover shows
+            // for as long as the palette download takes while the backdrop and the
+            // bottom fade are still tinted with the previous track's colour — a blue
+            // sleeve on a brown gradient. ColorExtractor caches per URL, so a track
+            // repeat pays nothing for this.
+            let palette = await ColorExtractor.shared.palette(for: url)
             await MainActor.run {
                 guard let self else { return }
                 guard self.lastArtworkKey == key else { return }
                 self.artwork = result
+                self.lastPaletteURL = url
+                self.palette = palette
                 WidgetDataManager.shared.update(
                     snapshot: self.snapshot,
                     artwork: result,
-                    palette: self.palette
+                    palette: palette
                 )
-                if let url = result.artworkURL, !url.isEmpty, url != self.lastPaletteURL {
-                    self.lastPaletteURL = url
-                    Task { [weak self] in
-                        let palette = await ColorExtractor.shared.palette(for: url)
-                        await MainActor.run {
-                            guard let self, self.lastPaletteURL == url else { return }
-                            self.palette = palette
-                            WidgetDataManager.shared.update(
-                                snapshot: self.snapshot,
-                                artwork: self.artwork,
-                                palette: palette
-                            )
-                        }
-                    }
-                }
             }
         }
     }
@@ -186,18 +183,23 @@ final class MiniPlayerViewModel: ObservableObject {
         let result = ArtworkResult(artworkURL: urlStr,
                                    animationURL: anim.square,
                                    animationTallURL: anim.tall)
-        artwork = result
-        WidgetDataManager.shared.update(snapshot: snapshot, artwork: result, palette: palette)
-        guard urlStr != lastPaletteURL else { return }
-        lastPaletteURL = urlStr
+        guard urlStr != lastPaletteURL else {
+            artwork = result
+            WidgetDataManager.shared.update(snapshot: snapshot, artwork: result, palette: palette)
+            return
+        }
+        // Same pairing as the remote path above — artwork and palette are published
+        // together so the backdrop is never tinted for the previous track.
         Task { [weak self] in
             let palette = await ColorExtractor.shared.palette(for: urlStr)
             await MainActor.run {
-                guard let self, self.lastPaletteURL == urlStr else { return }
+                guard let self else { return }
+                self.artwork = result
+                self.lastPaletteURL = urlStr
                 self.palette = palette
                 WidgetDataManager.shared.update(
                     snapshot: self.snapshot,
-                    artwork: self.artwork,
+                    artwork: result,
                     palette: palette
                 )
             }

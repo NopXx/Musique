@@ -49,10 +49,13 @@ final class NowPlayingService {
         // Lock Screen requires the system to see a real signal at the audio
         // HAL — all-zero samples don't qualify — so the WAV uses ±1 LSB
         // (≈ −90 dBFS, inaudible) and the player runs at full volume.
+        // 60s, not 1s: AVPlayerLooper re-arms the item on every loop, and each
+        // re-arm makes CoreMedia probe the (videoless) WAV for a video track and
+        // log -12860/-12864. A 1s file did that every second; 60s makes it rare.
         let tmpURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("musique_silence_v2.wav")
+            .appendingPathComponent("musique_silence_v3.wav")
         if !FileManager.default.fileExists(atPath: tmpURL.path) {
-            let wavData = Self.generateSilentWAV(durationSeconds: 1.0,
+            let wavData = Self.generateSilentWAV(durationSeconds: 60.0,
                                                   sampleRate: 44100,
                                                   channels: 1)
             try? wavData.write(to: tmpURL)

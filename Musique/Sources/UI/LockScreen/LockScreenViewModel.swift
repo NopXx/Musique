@@ -17,6 +17,15 @@ final class LockScreenViewModel: ObservableObject {
     @Published var backgroundBlur: Int = 60
     @Published var padding: Int = 32
     @Published var setSystemWallpaper: Bool = false
+    @Published var clock: Bool = true
+    @Published var clockFormat: String = "system"
+    @Published var clockDateStyle: String = "full"
+    @Published var clockSize: Int = 96
+
+    /// True while loginwindow's password panel is on screen. The fullscreen
+    /// artwork covers it completely, so it fades for as long as the panel is up.
+    /// Driven by `LockScreenController`.
+    @Published var lockUIVisible: Bool = false
 
     /// True only once the blurred artwork is *actually* the desktop picture.
     /// `setDesktopImageURL` returns immediately but WallpaperAgent repaints
@@ -29,12 +38,6 @@ final class LockScreenViewModel: ObservableObject {
     /// false — activation still running, or it failed — the copy keeps the artwork
     /// on screen instead of leaving the lock screen bare.
     @Published var motionWallpaperLive: Bool = false
-
-    /// The *outgoing* wallpaper image, shown full-screen at opacity 1 to mask an
-    /// instant real-desktop swap, then faded to nil to reveal the new desktop —
-    /// a crossfade over the un-animatable `setDesktopImageURL`. Driven by
-    /// `LockScreenController`.
-    @Published var crossfadeImage: NSImage?
 
     private weak var monitor: PlayerMonitor?
     private var cancellables = Set<AnyCancellable>()
@@ -86,14 +89,15 @@ final class LockScreenViewModel: ObservableObject {
         let pad = s.int(["lockscreen", "padding"])
         padding = pad > 0 ? pad : 32
         setSystemWallpaper = s.bool(["lockscreen", "set_system_wallpaper"])
-    }
-
-    /// Turn the "artwork as real wallpaper" mode on/off from the on-lock card.
-    /// `merge` publishes to `SettingsStore.$data`, which drives both this view
-    /// model's `readSettings` and `LockScreenController`'s live sync.
-    func setWallpaperEnabled(_ on: Bool) {
-        guard setSystemWallpaper != on else { return }
-        SettingsStore.shared.merge(["lockscreen": ["set_system_wallpaper": on]])
+        // `load()` deep-merges the defaults in, so a settings.json predating these
+        // keys still reads their defaults — no `?? true` fallback needed.
+        clock = s.bool(["lockscreen", "clock"])
+        let format = s.string(["lockscreen", "clock_format"])
+        clockFormat = format.isEmpty ? "system" : format
+        let dateStyle = s.string(["lockscreen", "clock_date_style"])
+        clockDateStyle = dateStyle.isEmpty ? "full" : dateStyle
+        let clockSizePt = s.int(["lockscreen", "clock_size"])
+        clockSize = clockSizePt > 0 ? clockSizePt : 96
     }
 
     private func handleTrackUpdate(_ snap: NowPlayingSnapshot?) {
@@ -129,20 +133,21 @@ final class LockScreenViewModel: ObservableObject {
                     downloadedImage = NSImage(data: data)
                 }
             }
+            // A failed lookup comes back empty. Committing it wipes the cover the
+            // fullscreen backdrop is built from and leaves the bare palette
+            // gradient — hold the previous artwork instead, the same way the
+            // track-change path above deliberately does.
+            guard let paletteURL = result.artworkURL, !paletteURL.isEmpty else { return }
+            // Palette before the commit, so cover and palette land in one hop.
+            // Published apart, the new cover sits on the previous track's gradient
+            // for as long as the palette download runs. Cached per URL.
+            let palette = await ColorExtractor.shared.palette(for: paletteURL)
             await MainActor.run {
                 guard let self, self.lastArtworkKey == key else { return }
                 self.artwork = result
                 self.artworkImage = downloadedImage
-                if let url = result.artworkURL, !url.isEmpty, url != self.lastPaletteURL {
-                    self.lastPaletteURL = url
-                    Task { [weak self] in
-                        let palette = await ColorExtractor.shared.palette(for: url)
-                        await MainActor.run {
-                            guard let self, self.lastPaletteURL == url else { return }
-                            self.palette = palette
-                        }
-                    }
-                }
+                self.lastPaletteURL = paletteURL
+                self.palette = palette
             }
         }
     }
@@ -153,16 +158,23 @@ final class LockScreenViewModel: ObservableObject {
     private func applyCustomArtwork(_ url: URL, for snap: NowPlayingSnapshot) {
         let urlStr = url.absoluteString
         let anim = CustomArtworkStore.shared.animationURLs(for: snap)
-        artwork = ArtworkResult(artworkURL: urlStr,
-                                animationURL: anim.square,
-                                animationTallURL: anim.tall)
-        artworkImage = NSImage(contentsOf: url)
-        guard urlStr != lastPaletteURL else { return }
-        lastPaletteURL = urlStr
+        let result = ArtworkResult(artworkURL: urlStr,
+                                   animationURL: anim.square,
+                                   animationTallURL: anim.tall)
+        let image = NSImage(contentsOf: url)
+        guard urlStr != lastPaletteURL else {
+            artwork = result
+            artworkImage = image
+            return
+        }
+        // Same pairing as the remote path above.
         Task { [weak self] in
             let palette = await ColorExtractor.shared.palette(for: urlStr)
             await MainActor.run {
-                guard let self, self.lastPaletteURL == urlStr else { return }
+                guard let self else { return }
+                self.artwork = result
+                self.artworkImage = image
+                self.lastPaletteURL = urlStr
                 self.palette = palette
             }
         }
