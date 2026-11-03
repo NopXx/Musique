@@ -16,6 +16,10 @@ settings:
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: true
     SWIFT_STRICT_CONCURRENCY: minimal
+packages:
+  MusanovaKit:
+    url: https://github.com/rryam/MusanovaKit.git
+    from: 4.0.0
 targets:
   Musique:
     type: application
@@ -68,6 +72,7 @@ targets:
         destination: wrapper
         subpath: Contents/Extensions
     - sdk: ScriptingBridge.framework
+    - package: MusanovaKit
   MusiqueWidget:
     type: app-extension
     platform: macOS
