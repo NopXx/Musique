@@ -124,6 +124,68 @@
 - [ ] MiniPlayerView — Thai strings (`ยังไม่ได้เล่นเพลง`, `เพลงสั้นเกินไป`, `แก้ข้อมูลเพลง`, etc.)
 - [ ] AnimationFullscreenView — `กดเพื่อปิด`
 
+### Desktop mini player
+- [ ] Mini player เป็นหน้าต่างลอยบน desktop (แยกจาก menu bar `NSPopover`) — reuse `MiniPlayerView` เดิมใน borderless `NSPanel`
+- [ ] Toggle เปิด/ปิด จาก menu bar + setting `miniplayer.desktop_enabled`
+- [ ] Window level ให้เลือก: ลอยเหนือทุกหน้าต่าง (`.floating`) / ติด desktop (`kCGDesktopIconWindowLevel`) / ปกติ
+- [ ] ลากย้ายได้ (`isMovableByWindowBackground`) + จำตำแหน่งต่อจอ (`setFrameAutosaveName`)
+- [ ] `collectionBehavior` `.canJoinAllSpaces` + `.stationary` — โผล่ทุก Space, ไม่หายตอน Mission Control
+- [ ] ระวัง: ห้ามใช้ SwiftUI `.popover` ซ้อนข้างใน (ดู memory `no-nested-popover-miniplayer`) — ใช้ overlay หรือ NSWindow แยก
+- [ ] ซ่อนอัตโนมัติตอน fullscreen app / ตอนไม่มีเพลง (optional)
+
+### Web Scrobbler ingest (รับ webhook จาก [web-scrobbler](https://github.com/web-scrobbler/web-scrobbler))
+เป้าหมาย: เพลงที่เล่นในเว็บ (YouTube, SoundCloud, Bandcamp ฯลฯ) ผ่าน extension web-scrobbler ส่งเข้า Musique เป็น source ที่สาม ถัดจาก Apple Music / Spotify
+**Payload จริง** (verified จาก `src/core/scrobbler/webhook-scrobbler.ts` + `src/core/object/song.ts`, branch `master`):
+- `POST <userApiUrl>`, `Content-Type: application/json`, ไม่มี auth header, timeout 15s
+- **ต้องตอบ status `200` เป๊ะ** — `204`/`201` นับเป็น error (`response.status !== 200`)
+- Body: `{ eventName, time /* ms epoch */, data: { song, songs?, isLoved?, currentlyPlaying? } }`
+
+| `eventName` | `data` | ยิงตอน |
+|---|---|---|
+| `nowplaying` | `{ song }` | เริ่มเพลง |
+| `paused` | `{ song }` | pause |
+| `resumedplaying` | `{ song }` | เล่นต่อ |
+| `scrobble` | `{ song /* = songs[0] */, songs, currentlyPlaying }` | ถึงเกณฑ์ scrobble (อาจมาเป็น batch) |
+| `loved` | `{ song, isLoved }` | **ไม่เคยยิงจริง** — ดูข้างล่าง |
+
+- `song` = `JSON.stringify` ของ class `Song` → ได้แค่ field ไม่ได้ getter:
+  - `parsed`: `track, artist, album, albumArtist, duration, trackArt, uniqueID, originUrl, isPodcast, isPlaying, currentTime, scrobblingDisallowedReason` (ทุกตัว optional/nullable)
+  - `processed`: `track, artist, album, albumArtist, duration` (หลังผ่าน regex/edit/Last.fm correction)
+  - `noRegex`, `flags` (`isScrobbled, isCorrectedByUser, isSkipped, isReplaying, …`), `metadata` (`label, startTimestamp, trackArtUrl, trackUrl, userloved, …`), `connector` (`label, …`)
+- ทำตาม getter ของ `BaseSong`: text = `processed.X ?? parsed.X`; duration = `parsed.duration ?? processed.duration` (**วินาที**); artwork = `parsed.trackArt ?? metadata.trackArtUrl`; ไม่มี artist หรือ track = song ว่าง → ข้าม
+- **ไม่มี event position/heartbeat และไม่มี "stopped"** — `currentTime` เป็นค่า ณ `time` ของ event; ปิด tab แล้วเงียบไปเลย
+- หลาย URL ได้ — ส่งพร้อมกันทุกอัน (`Promise.all`); อันไหนไม่ตอบ 200 (เช่น Musique ปิดอยู่) extension ขึ้น error ทั้ง call แต่อันอื่นยังได้รับปกติ
+- **ทดสอบจริงแล้ว (YouTube, listener บน `127.0.0.1:8766`):**
+  - ไม่มี CORS preflight — POST ตรงมาเลย, header `Origin: chrome-extension://<id>`
+  - `processed` override `parsed` จริง (user แก้ artist `i-dle` → `MIYEON`) → อ่าน `processed` ก่อนถูกแล้ว
+  - YouTube ให้ `parsed.trackArt = null`, album null — artwork ได้จาก `metadata.trackArtUrl` (Last.fm 300×300) เท่านั้น; ArtworkService ของเราค้นใหม่ได้ดีกว่า
+  - `metadata.startTimestamp` = unix **วินาที** (ต่างจาก `time` ที่เป็น ms); `uniqueID` = YouTube video id
+  - **`nowplaying` ซ้ำ 2 ครั้งห่าง ~0.5s** สำหรับเพลงเดียวกัน → dedupe ด้วย `uniqueID` + `startTimestamp`; เล่นซ้ำเพลงเดิม = `startTimestamp` ใหม่
+  - `scrobble` มาตอนเล่นถึง ~60% (`currentTime` 103/171) และ `flags.isScrobbled` ยังเป็น `false` ใน payload
+  - มี field ที่ไม่อยู่ใน type: `song.controllerTabId` → decoder ต้อง ignore unknown
+  - `paused` → `parsed.isPlaying=false`, `currentTime` ณ ตอน pause (96); `resumedplaying` → `isPlaying=true`, `currentTime` = ค่าเดียวกับตอน pause (96); `startTimestamp` เดิมทั้งคู่ → position ตอน resume ใช้ `currentTime` ได้ตรง
+  - `scrobble` ยิงหลัง resume ตามเวลาเล่นสะสม (ไม่นับช่วง pause) — ไม่ต้องสนใจตอนคำนวณ position
+  - ตาม `controller.ts`: pause/resume ส่งเฉพาะเพลงที่ `isValid()` + ผ่าน `shouldScrobble()` (เพลงที่ถูก blocklist / ไม่รู้จัก ไม่มี event)
+  - **`loved` ไม่มีวันมา**: `scrobble-service.toggleLove` กรองด้วย `scrobbler.canLoveSong()` และ `WebhookScrobbler` ไม่ override (default `false` ใน `base-scrobbler.ts`) — กดหัวใจใน popup แล้วก็ไม่ส่ง (ทดสอบแล้ว). สถานะ love ที่มีคือ `metadata.userloved` (ค่า Last.fm ตอน fetch) ใน event อื่น — ไม่ update ตามการกด
+- Setup ฝั่ง extension (เห็นใน UI จริงแล้ว): Options → Webhook → Properties ใส่ "Application name" + "API URL" → Add Webhook; **หรือ** เปิด `https://webscrobbler.com/webhook?applicationName=Musique&userApiUrl=<encoded url>` → extension inject script ให้ user กด accept → เพิ่ม URL ให้เอง (one-click)
+
+Tasks:
+- [x] Endpoint `POST /api/webscrobbler` — ต่อกับ `DebugServer` ที่มีอยู่ (loopback `127.0.0.1` เท่านั้น) หรือแยก listener ถ้าไม่อยากให้ผูกกับ debug toggle; ตอบ `200` เสมอเมื่อ decode ผ่าน
+- [x] Auth: secret token ใน query (`?token=`) เพราะ extension ส่ง header เองไม่ได้ — กันเว็บอื่นยิง localhost
+- [x] Decoder `Codable` แบบ lenient (ทุก field optional, ignore unknown) → `NowPlayingSnapshot` source ใหม่ `.webScrobbler`
+- [x] State machine: `nowplaying`/`resumedplaying` → playing, `paused` → paused, `scrobble` → ไม่เปลี่ยนสถานะ (แค่ mark scrobbled); `loved` decode ไว้เผื่อ upstream แก้ แต่ไม่ต้องทำ UI
+- [x] Position: `currentTime + (now − time/1000)` ขณะ playing, เดินด้วย 1 Hz tick เดิม; ถ้า `currentTime` เป็น null นับจาก `time` ของ `nowplaying`
+- [x] Expire: playing เกิน `duration` + grace (เช่น 30s) โดยไม่มี event ใหม่ หรือ paused นาน (เช่น 10 นาที) → ถือว่าหยุด/ล้าง source (ไม่มี stopped event)
+- [x] `pickSnapshot` priority + setting `sources.web_scrobbler_enabled`
+- [x] Control commands (play/pause/next/seek) ใช้ไม่ได้ — disable ปุ่มใน mini player / lock screen / `MPRemoteCommandCenter` เมื่อ active source นี้
+- [x] กัน scrobble ซ้ำ: web-scrobbler scrobble Last.fm เองอยู่แล้ว → setting ว่า Musique scrobble ซ้ำไหม (default: ไม่); ถ้าเปิด ให้ใช้ event `scrobble` เป็นตัวสั่งแทนนับ % เอง
+- [~] History / webhook dispatcher / widget ได้ข้อมูลจาก source นี้ (ผ่าน `snapshot` ตามปกติ — ยังไม่ได้ลอง end-to-end); ยังไม่ได้เก็บ `connector.label` (เช่น "YouTube") + `originUrl` ไว้แสดง
+- [x] Settings UI: แสดง URL พร้อม token ให้ copy + ปุ่ม "เชื่อมต่อ web-scrobbler" เปิด approval link ข้างบน
+- [x] Unit test: decode payload ตัวอย่างทุก `eventName` (รวม `scrobble` แบบ batch + song ที่ field เป็น null) → snapshot ถูกต้อง
+- [x] **Implemented** — `Player/WebScrobblerReceiver.swift` (`WebScrobblerEvent` decoder, `WebScrobblerState` reducer, loopback `NWListener` port 8766 + `?token=`), source `.webScrobbler` ใน `PlaybackSource`, `PlayerMonitor.pickSnapshot` รองรับ N source, tests `MusiqueTests/WebScrobblerTests.swift`
+- [x] ลองกับ extension จริงผ่าน app build (Xcode) — nowplaying/paused/resumedplaying เข้า, position ถูก, lyrics TTML ได้ (33 บรรทัด); `nowplaying` มาถึง 4 ครั้งติดกัน dedupe ด้วย persistentID ได้
+- [ ] Waveform (`MusicAudioLevelMonitor`) ไม่ tap browser — เพลงจากเว็บไม่มี wave (ต้อง tap Chrome/Safari process; optional)
+
 ### Polish
 - [ ] App icon + Dock icon (LSUIElement = NO ตอน first-run welcome?)
 - [ ] Code signing + notarization สำหรับ release

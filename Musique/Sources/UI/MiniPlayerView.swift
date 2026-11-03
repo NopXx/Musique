@@ -115,6 +115,8 @@ struct MiniPlayerView: View {
                         Spacer()
                     }
                     .padding(.top, 10)
+                    .disabled(!canControl)
+                    .opacity(canControl ? 1 : 0.35)
                     HStack {
                         Spacer()
                         sourceMenuButton()
@@ -241,7 +243,12 @@ struct MiniPlayerView: View {
             }
             .buttonStyle(.plain)
         }
+        .disabled(!canControl)
+        .opacity(canControl ? 1 : 0.35)
     }
+
+    /// Web playback arrives one-way from the browser extension; nothing to send commands to.
+    private var canControl: Bool { viewModel.snapshot?.source.isControllable ?? true }
 
     @ViewBuilder
     private var topBar: some View {
@@ -489,6 +496,8 @@ struct MiniPlayerView: View {
                 Spacer()
             }
             .padding(.top, 14)
+            .disabled(!canControl)
+            .opacity(canControl ? 1 : 0.35)
 
             HStack {
                 Spacer()

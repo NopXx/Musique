@@ -1,30 +1,33 @@
 import Foundation
 import AppKit
 
-enum PlaybackSource: String {
+enum PlaybackSource: String, CaseIterable {
     case appleMusic = "apple_music"
     case spotify
-
-    var bundleID: String {
-        switch self {
-        case .appleMusic: return "com.apple.Music"
-        case .spotify:    return "com.spotify.client"
-        }
-    }
+    /// Browser playback pushed by the web-scrobbler extension's webhook. Read-only:
+    /// there's no channel back to the page, so transport commands are no-ops.
+    case webScrobbler = "web_scrobbler"
 
     var displayName: String {
         switch self {
-        case .appleMusic: return "Apple Music"
-        case .spotify:    return "Spotify"
+        case .appleMusic:   return "Apple Music"
+        case .spotify:      return "Spotify"
+        case .webScrobbler: return "Web Scrobbler"
         }
     }
 
     var sfSymbol: String {
         switch self {
-        case .appleMusic: return "applelogo"
-        case .spotify:    return "waveform"
+        case .appleMusic:   return "applelogo"
+        case .spotify:      return "waveform"
+        case .webScrobbler: return "globe"
         }
     }
+
+    /// `settings["sources"][enabledKey]`
+    var enabledKey: String { "\(rawValue)_enabled" }
+
+    var isControllable: Bool { self != .webScrobbler }
 }
 
 /// Facade that routes transport commands to whichever player is currently active.
@@ -36,6 +39,7 @@ enum MusicAppController {
         switch activeSource {
         case .appleMusic: AppleMusicController.shared.run { $0.playOnce(false) }
         case .spotify:    SpotifyController.shared.run { $0.play() }
+        case .webScrobbler: break
         }
     }
 
@@ -43,6 +47,7 @@ enum MusicAppController {
         switch activeSource {
         case .appleMusic: AppleMusicController.shared.run { $0.pause() }
         case .spotify:    SpotifyController.shared.run { $0.pause() }
+        case .webScrobbler: break
         }
     }
 
@@ -50,6 +55,7 @@ enum MusicAppController {
         switch activeSource {
         case .appleMusic: AppleMusicController.shared.run { $0.playpause() }
         case .spotify:    SpotifyController.shared.run { $0.playpause() }
+        case .webScrobbler: break
         }
     }
 
@@ -57,6 +63,7 @@ enum MusicAppController {
         switch activeSource {
         case .appleMusic: AppleMusicController.shared.run { $0.nextTrack() }
         case .spotify:    SpotifyController.shared.run { $0.nextTrack() }
+        case .webScrobbler: break
         }
     }
 
@@ -64,6 +71,7 @@ enum MusicAppController {
         switch activeSource {
         case .appleMusic: AppleMusicController.shared.run { $0.previousTrack() }
         case .spotify:    SpotifyController.shared.run { $0.previousTrack() }
+        case .webScrobbler: break
         }
     }
 
@@ -71,6 +79,7 @@ enum MusicAppController {
         switch activeSource {
         case .appleMusic: AppleMusicController.shared.run { $0.playerPosition = seconds }
         case .spotify:    SpotifyController.shared.run { $0.playerPosition = seconds }
+        case .webScrobbler: break
         }
     }
 }

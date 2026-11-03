@@ -15,6 +15,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var scrobbleMinSeconds: Int
     @Published var scrobbleAppleMusic: Bool
     @Published var scrobbleSpotify: Bool
+    @Published var scrobbleWebScrobbler: Bool
 
     @Published var notificationsEnabled: Bool
     @Published var notifOnPlay: Bool
@@ -63,6 +64,7 @@ final class SettingsViewModel: ObservableObject {
 
     @Published var sourceAppleMusicEnabled: Bool
     @Published var sourceSpotifyEnabled: Bool
+    @Published var sourceWebScrobblerEnabled: Bool
     @Published var sourcePriority: String
 
     private let store = SettingsStore.shared
@@ -80,6 +82,7 @@ final class SettingsViewModel: ObservableObject {
         self.scrobbleMinSeconds = store.int(["scrobble", "min_seconds"])
         self.scrobbleAppleMusic = store.value(["scrobble", "scrobble_apple_music"], Bool.self) ?? true
         self.scrobbleSpotify = store.value(["scrobble", "scrobble_spotify"], Bool.self) ?? true
+        self.scrobbleWebScrobbler = store.bool(["scrobble", "scrobble_web_scrobbler"])
 
         self.notificationsEnabled = store.bool(["notifications", "enabled"])
         self.notifOnPlay = store.bool(["notifications", "on_play"])
@@ -142,6 +145,7 @@ final class SettingsViewModel: ObservableObject {
 
         self.sourceAppleMusicEnabled = store.bool(["sources", "apple_music_enabled"])
         self.sourceSpotifyEnabled = store.bool(["sources", "spotify_enabled"])
+        self.sourceWebScrobblerEnabled = store.bool(["sources", "web_scrobbler_enabled"])
         let prio = store.string(["sources", "priority"])
         self.sourcePriority = prio.isEmpty ? "apple_music" : prio
     }
@@ -249,6 +253,7 @@ final class SettingsViewModel: ObservableObject {
             "min_seconds": scrobbleMinSeconds,
             "scrobble_apple_music": scrobbleAppleMusic,
             "scrobble_spotify": scrobbleSpotify,
+            "scrobble_web_scrobbler": scrobbleWebScrobbler,
         ]])
     }
 
@@ -256,6 +261,7 @@ final class SettingsViewModel: ObservableObject {
         store.merge(["sources": [
             "apple_music_enabled": sourceAppleMusicEnabled,
             "spotify_enabled": sourceSpotifyEnabled,
+            "web_scrobbler_enabled": sourceWebScrobblerEnabled,
             "priority": sourcePriority,
         ]])
         Task { @MainActor in AppDelegate.shared?.playerMonitor.refresh() }
@@ -562,12 +568,37 @@ private struct SourcesTab: View {
                 SettingsToggleRow(label: "Spotify", isOn: $vm.sourceSpotifyEnabled)
                     .onChange(of: vm.sourceSpotifyEnabled) { _, _ in vm.saveSources() }
 
+                SettingsToggleRow(
+                    label: "Web Scrobbler",
+                    help: LocalizedStringKey(L10n.tr("เพลงจากเว็บ (YouTube ฯลฯ) ผ่าน extension web-scrobbler",
+                                                     "Browser playback (YouTube etc.) via the web-scrobbler extension")),
+                    isOn: $vm.sourceWebScrobblerEnabled)
+                    .onChange(of: vm.sourceWebScrobblerEnabled) { _, _ in vm.saveSources() }
+
+                if vm.sourceWebScrobblerEnabled {
+                    CardRow(label: "Webhook URL") {
+                        HStack(spacing: 8) {
+                            Button(L10n.tr("คัดลอก", "Copy")) {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(WebScrobblerReceiver.webhookURL, forType: .string)
+                            }
+                            Button(L10n.tr("เชื่อมต่อ", "Connect")) {
+                                if let url = WebScrobblerReceiver.approvalURL { NSWorkspace.shared.open(url) }
+                            }
+                        }
+                    }
+                    CardFooter(text: LocalizedStringKey(L10n.tr(
+                        "กด เชื่อมต่อ แล้วกดยอมรับในหน้าเว็บ หรือคัดลอก URL ไปใส่เองใน web-scrobbler › Options › Webhook — ปุ่มควบคุมเพลงใช้ไม่ได้กับเพลงจากเว็บ",
+                        "Press Connect and accept on the page, or paste the URL into web-scrobbler › Options › Webhook yourself. Playback controls don't reach browser tabs.")))
+                }
+
                 Divider().opacity(0.4)
 
                 CardRow(label: LocalizedStringKey(L10n.tr("ลำดับความสำคัญ", "Priority when both play"))) {
                     Picker("", selection: $vm.sourcePriority) {
                         Text("Apple Music").tag("apple_music")
                         Text("Spotify").tag("spotify")
+                        Text("Web").tag("web_scrobbler")
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
@@ -700,6 +731,15 @@ private struct LastfmTab: View {
                     SettingsToggleRow(label: LocalizedStringKey(L10n.scrobbleSpotify),
                                       isOn: $vm.scrobbleSpotify)
                         .onChange(of: vm.scrobbleSpotify) { _, _ in vm.saveScrobbleRules() }
+
+                    Divider().opacity(0.4)
+
+                    SettingsToggleRow(
+                        label: "Web Scrobbler",
+                        help: LocalizedStringKey(L10n.tr("ปิดไว้ถ้า extension scrobble เองอยู่แล้ว ไม่งั้นจะซ้ำ",
+                                                         "Leave off if the extension already scrobbles, or plays count twice")),
+                        isOn: $vm.scrobbleWebScrobbler)
+                        .onChange(of: vm.scrobbleWebScrobbler) { _, _ in vm.saveScrobbleRules() }
                 }
             }
 

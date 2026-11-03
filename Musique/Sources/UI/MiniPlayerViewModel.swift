@@ -31,13 +31,9 @@ final class MiniPlayerViewModel: ObservableObject {
 
     /// One row per enabled source, active one first.
     var sourceItems: [SourceItem] {
-        let order: [PlaybackSource] = [.appleMusic, .spotify]
         let settings = SettingsStore.shared
-        return order.compactMap { src in
-            let enabled = src == .appleMusic
-                ? settings.bool(["sources", "apple_music_enabled"])
-                : settings.bool(["sources", "spotify_enabled"])
-            guard enabled else { return nil }
+        return PlaybackSource.allCases.compactMap { src in
+            guard settings.bool(["sources", src.enabledKey]) else { return nil }
             return SourceItem(source: src,
                               snapshot: sourceSnapshots[src],
                               isActive: src == activeSource)
