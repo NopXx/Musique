@@ -27,7 +27,14 @@ final class SettingsStore: ObservableObject {
             "sources": [
                 "apple_music_enabled": true,
                 "spotify_enabled": true,
+                "web_scrobbler_enabled": false,
                 "priority": "apple_music",
+            ],
+            // Receiver for the web-scrobbler extension's webhook. `token` is
+            // generated on first launch by WebScrobblerReceiver.
+            "web_scrobbler": [
+                "port": 8766,
+                "token": "",
             ],
             "lastfm": [
                 "api_key": "",
@@ -42,6 +49,7 @@ final class SettingsStore: ObservableObject {
                 "min_seconds": 30,
                 "scrobble_apple_music": true,
                 "scrobble_spotify": true,
+                "scrobble_web_scrobbler": false,
             ],
             "notifications": [
                 "enabled": false,
