@@ -7,7 +7,7 @@ import AppKit
 /// a strip between the title and the progress row, the same way the card does.
 struct DesktopCompactPlayerView: View {
     @ObservedObject var viewModel: MiniPlayerViewModel
-    var onLyricsShown: (Bool) -> Void = { _ in }
+    var onLyricsShown: (Bool) -> Bool = { _ in false }
     @State private var lyrics: [LyricLine] = []
     @State private var lyricsLoading = false
     /// Lags `showsLyrics` on the way in (window first) and leads it on the way
@@ -46,11 +46,11 @@ struct DesktopCompactPlayerView: View {
         // and waiting for a change left the strip shut until toggled off and on.
         .onChange(of: showsLyrics, initial: true) { _, on in
             if on {
-                onLyricsShown(true)
+                _ = onLyricsShown(true)
                 withAnimation(Self.stripMove) { expanded = true }
             } else {
                 withAnimation(Self.stripMove) { expanded = false } completion: {
-                    if !showsLyrics { onLyricsShown(false) }
+                    if !showsLyrics { _ = onLyricsShown(false) }
                 }
             }
         }

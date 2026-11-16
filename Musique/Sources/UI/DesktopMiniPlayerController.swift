@@ -17,6 +17,9 @@ final class DesktopMiniPlayerController {
     private let viewModel: MiniPlayerViewModel
     private var panel: NSPanel?
     private var style = ""
+    /// How far the window grew to the left for the card's lyrics panel, so it
+    /// shrinks back from that side and a design switch starts where the card is.
+    private var leftGrowth: CGFloat = 0
     private var cancellables = Set<AnyCancellable>()
 
     init(viewModel: MiniPlayerViewModel) {
@@ -98,13 +101,15 @@ final class DesktopMiniPlayerController {
             root = AnyView(DesktopCompactPlayerView(
                 viewModel: viewModel,
                 onLyricsShown: lyricsResizer(panel, style: raw, base: size,
-                                             extra: DesktopCompactPlayerView.lyricsHeight)))
+                                             extra: NSSize(width: 0,
+                                                           height: DesktopCompactPlayerView.lyricsHeight))))
         } else {
             size = NSSize(width: DesktopPlayerView.size, height: DesktopPlayerView.size)
             root = AnyView(DesktopPlayerView(
                 viewModel: viewModel,
                 onLyricsShown: lyricsResizer(panel, style: raw, base: size,
-                                             extra: DesktopPlayerView.lyricsHeight)))
+                                             extra: NSSize(width: DesktopPlayerView.lyricsWidth,
+                                                           height: 0))))
         }
         // SwiftUI swallows background drags, so isMovableByWindowBackground alone
         // never fires; buttons and the seek bar still win over this.
@@ -122,28 +127,40 @@ final class DesktopMiniPlayerController {
         host.frame = container.bounds
         container.addSubview(host)
         // Read the corner first, so the content swap can't move the top edge.
-        let topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        let topLeft = NSPoint(x: panel.frame.minX + leftGrowth, y: panel.frame.maxY)
+        leftGrowth = 0
         panel.contentView = container
         place(panel, topLeft: topLeft, size: size)
     }
 
-    /// Grows the window by the lyrics strip and back, for the style that asked.
+    /// Grows the window by the lyrics area and back, for the style that asked —
+    /// downward for the glass bar, sideways for the card. The player never moves
+    /// on screen: the card grows right, or left when the right has no room, and
+    /// the returned flag tells the view which side its panel goes on.
     private func lyricsResizer(_ panel: NSPanel, style raw: String, base: NSSize,
-                               extra: CGFloat) -> (Bool) -> Void {
+                               extra: NSSize) -> (Bool) -> Bool {
         { [weak self, weak panel] on in
+            guard let self, let panel else { return false }
+            var growLeft = false
+            if on, extra.width > 0, self.leftGrowth == 0,
+               let visible = (panel.screen ?? NSScreen.main)?.visibleFrame {
+                growLeft = panel.frame.minX + base.width + extra.width > visible.maxX
+            }
+            if on, self.leftGrowth > 0 { growLeft = true }  // already open on the left
             // Next turn of the run loop: this fires inside a SwiftUI update, and
             // resizing the window there re-enters layout (AppKit logs it).
             DispatchQueue.main.async {
-                guard let self, let panel, self.style == raw else { return }
-                self.resize(panel, to: NSSize(width: base.width,
-                                              height: base.height + (on ? extra : 0)))
+                guard self.style == raw else { return }
+                let size = NSSize(width: base.width + (on ? extra.width : 0),
+                                  height: base.height + (on ? extra.height : 0))
+                // Keep the card's own left edge where it is on screen.
+                let cardX = panel.frame.minX + self.leftGrowth
+                self.leftGrowth = growLeft ? extra.width : 0
+                self.place(panel, topLeft: NSPoint(x: cardX - self.leftGrowth,
+                                                   y: panel.frame.maxY), size: size)
             }
+            return growLeft
         }
-    }
-
-    /// Resizes keeping the top edge put, so the lyrics strip grows downward.
-    private func resize(_ panel: NSPanel, to size: NSSize) {
-        place(panel, topLeft: NSPoint(x: panel.frame.minX, y: panel.frame.maxY), size: size)
     }
 
     private func place(_ panel: NSPanel, topLeft: NSPoint, size: NSSize) {
@@ -157,6 +174,13 @@ final class DesktopMiniPlayerController {
                                    y: visible.maxY - size.height - 24)
         }
         guard frame != panel.frame else { return }
-        panel.setFrame(frame, display: true)
+        // Lay SwiftUI out before and right after the move, so the window never
+        // shows a frame of the old layout at the new origin — growing left, the
+        // card jumped by the panel's width and slid back.
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.displayIfNeeded()
+        panel.setFrame(frame, display: false)
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.display()
     }
 }

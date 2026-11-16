@@ -303,8 +303,8 @@ struct FullscreenLyricsView: View {
 
     /// Where the sung line parks, as a fraction of the height — near
     /// the top, as Apple Music does (~13% on a capture), leaving room for one
-    /// faded line of what's gone and the rest for what's coming.
-    private let anchor: CGFloat = 0.14
+    /// faded line of what's gone and the rest for what's coming. 0.5 centres it.
+    var anchor: CGFloat = 0.14
 
     var body: some View {
         GeometryReader { geo in

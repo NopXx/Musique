@@ -6,21 +6,24 @@ import AppKit
 /// transport sit. The menu bar popover keeps `MiniPlayerView`; this one is only
 /// what `DesktopMiniPlayerController` hosts.
 ///
-/// Lyrics don't go on the cover: the window grows a strip *below* the card for
-/// them, and `onLyricsShown` is how the controller learns to resize it.
+/// Lyrics don't go on the cover: the window grows a panel to the *right* of the
+/// card for them, and `onLyricsShown` is how the controller learns to resize it.
 struct DesktopPlayerView: View {
     @ObservedObject var viewModel: MiniPlayerViewModel
-    var onLyricsShown: (Bool) -> Void = { _ in }
+    /// Returns whether the window grew leftward (no room on the right), so the
+    /// panel goes on the card's left and the card itself stays where it was.
+    var onLyricsShown: (Bool) -> Bool = { _ in false }
     @State private var lyrics: [LyricLine] = []
     @State private var lyricsLoading = false
-    /// Drives the strip's height. Lags `showsLyrics` on the way in (window first,
-    /// then the strip slides down) and leads it on the way out (strip first, then
+    /// Drives the panel's width. Lags `showsLyrics` on the way in (window first,
+    /// then the panel slides open) and leads it on the way out (panel first, then
     /// the window shrinks) — an animated window resize made the card jump.
     @State private var expanded = false
+    @State private var panelOnLeft = false
 
     static let size: CGFloat = 340
-    /// The strip under the card: two or three lines.
-    static let lyricsHeight: CGFloat = 92
+    /// The lyrics panel beside the card.
+    static let lyricsWidth: CGFloat = 300
 
     private var snap: NowPlayingSnapshot? { viewModel.snapshot }
     private var hasTrack: Bool { snap?.hasTrack == true }
@@ -29,31 +32,37 @@ struct DesktopPlayerView: View {
 
 
     var body: some View {
-        VStack(spacing: 0) {
+        HStack(spacing: 0) {
+            if panelOnLeft { lyricsPanel }
             ZStack(alignment: .bottom) {
                 artwork
                 bottomFade
                 content
             }
             .frame(width: Self.size, height: Self.size)
-            lyricsStrip
+            if !panelOnLeft { lyricsPanel }
         }
-        .frame(width: Self.size, height: Self.size + (expanded ? Self.lyricsHeight : 0),
-               alignment: .top)
+        .frame(width: Self.size + (expanded ? Self.lyricsWidth : 0), height: Self.size,
+               alignment: cardSide)
         .background(stripColor)
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        // The window is already tall while the strip grows; below the card is clear.
-        .frame(maxHeight: .infinity, alignment: .top)
+        // The window is already wide while the panel grows; the card is pinned to
+        // its own side of it, so it never moves on screen.
+        .frame(maxWidth: .infinity, alignment: cardSide)
         .animation(.easeInOut(duration: 0.7), value: viewModel.palette.accent)
         // Initial too: switching design builds this view with lyrics already on,
         // and waiting for a change left the strip shut until toggled off and on.
         .onChange(of: showsLyrics, initial: true) { _, on in
             if on {
-                onLyricsShown(true)
-                withAnimation(Self.stripMove) { expanded = true }
+                panelOnLeft = onLyricsShown(true)
+                // After the window has grown (the controller resizes on the next
+                // turn too): animating while it moved slid the card across it.
+                DispatchQueue.main.async {
+                    withAnimation(Self.stripMove) { expanded = true }
+                }
             } else {
                 withAnimation(Self.stripMove) { expanded = false } completion: {
-                    if !showsLyrics { onLyricsShown(false) }
+                    if !showsLyrics { _ = onLyricsShown(false) }
                 }
             }
         }
@@ -110,26 +119,27 @@ struct DesktopPlayerView: View {
               ?? .black)
     }
 
-    /// Exactly the colour the card's bottom fade ends on, so the strip reads as
-    /// the card carrying on rather than a second panel.
+    /// Exactly the colour the card's bottom fade ends on, so the panel reads as
+    /// the card carrying on rather than a second window.
     private var stripColor: some View { shade }
 
     private static let stripMove = Animation.easeInOut(duration: 0.28)
 
+    private var cardSide: Alignment { panelOnLeft ? .trailing : .leading }
+
     @ViewBuilder
-    private var lyricsStrip: some View {
+    private var lyricsPanel: some View {
         if expanded, showsLyrics, let snap {
             Group {
                 if lyrics.isEmpty {
                     LyricsStatusView(loading: lyricsLoading)
                 } else {
-                    FullscreenLyricsView(lines: lyrics, playback: snap, fontSize: 14, spacing: 6)
+                    FullscreenLyricsView(lines: lyrics, playback: snap, fontSize: 18, spacing: 10,
+                                         anchor: 0.5)
                 }
             }
-                .frame(maxWidth: .infinity)
-                .frame(height: 70)
-                .padding(.horizontal, 22)
-                .padding(.bottom, 14)
+                .frame(width: Self.lyricsWidth - 40, height: Self.size - 40)
+                .padding(20)
                 .transition(.opacity)
         }
     }
