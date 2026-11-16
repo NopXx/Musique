@@ -95,10 +95,6 @@ enum L10n {
     static var miniplayerAnimFull: String { tr("เต็ม (รวม backdrop)", "Full (with backdrop)") }
     static var miniplayerAnimFullscreen: String { tr("แสดง Animation เต็มจอ", "Show fullscreen animation") }
     static var miniplayerDesktopEnabled: String { tr("Mini player บน desktop", "Desktop mini player") }
-    static var miniplayerDesktopStyle: String { tr("หน้าตา", "Design") }
-    static var miniplayerStyleCard: String { tr("การ์ดปกเต็ม", "Artwork card") }
-    static var miniplayerStyleCompact: String { tr("แถบกระจก", "Glass bar") }
-    static var miniplayerStyleClassic: String { tr("แบบ menu bar", "Same as menu bar") }
     static var miniplayerDesktopLevel: String { tr("ตำแหน่งหน้าต่าง", "Window level") }
     static var miniplayerLevelFloating: String { tr("ลอยเหนือทุกหน้าต่าง", "Above all windows") }
     static var miniplayerLevelNormal: String { tr("ปกติ", "Normal") }

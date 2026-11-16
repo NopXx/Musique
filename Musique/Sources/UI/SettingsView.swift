@@ -27,7 +27,6 @@ final class SettingsViewModel: ObservableObject {
     @Published var animationFullscreen: Bool
     @Published var miniplayerDesktopEnabled: Bool
     @Published var miniplayerDesktopLevel: String
-    @Published var miniplayerDesktopStyle: String
 
     @Published var menubarStyle: String
     @Published var menubarShowIcon: Bool
@@ -101,8 +100,6 @@ final class SettingsViewModel: ObservableObject {
         self.miniplayerDesktopEnabled = store.bool(["miniplayer", "desktop_enabled"])
         let level = store.string(["miniplayer", "desktop_level"])
         self.miniplayerDesktopLevel = level.isEmpty ? "floating" : level
-        let dstyle = store.string(["miniplayer", "desktop_style"])
-        self.miniplayerDesktopStyle = dstyle.isEmpty ? "card" : dstyle
 
         let mbStyle = store.string(["menubar", "style"])
         self.menubarStyle = mbStyle.isEmpty ? "text" : mbStyle
@@ -340,7 +337,6 @@ final class SettingsViewModel: ObservableObject {
             "animation_fullscreen": animationFullscreen,
             "desktop_enabled": miniplayerDesktopEnabled,
             "desktop_level": miniplayerDesktopLevel,
-            "desktop_style": miniplayerDesktopStyle,
         ]])
     }
 
@@ -1114,19 +1110,6 @@ private struct MiniplayerTab: View {
                 SettingsToggleRow(label: LocalizedStringKey(L10n.miniplayerDesktopEnabled),
                                   isOn: $vm.miniplayerDesktopEnabled)
                     .onChange(of: vm.miniplayerDesktopEnabled) { _, _ in vm.saveMiniplayer() }
-
-                Divider().opacity(0.4)
-
-                CardRow(label: LocalizedStringKey(L10n.miniplayerDesktopStyle)) {
-                    Picker("", selection: $vm.miniplayerDesktopStyle) {
-                        Text(L10n.miniplayerStyleCard).tag("card")
-                        Text(L10n.miniplayerStyleCompact).tag("compact")
-                        Text(L10n.miniplayerStyleClassic).tag("classic")
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                    .onChange(of: vm.miniplayerDesktopStyle) { _, _ in vm.saveMiniplayer() }
-                }
 
                 Divider().opacity(0.4)
 

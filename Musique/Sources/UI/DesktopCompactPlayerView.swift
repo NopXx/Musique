@@ -204,10 +204,11 @@ struct DesktopCompactPlayerView: View {
             .disabled(!canControl)
             .opacity(canControl ? 1 : 0.35)
             Spacer()
-            sideButton(icon: "arrow.up.left.and.arrow.down.right", active: false) {
-                AppDelegate.shared?.menuBarController?.toggleDesktopFullscreen()
+            // Up to the artwork card — mirrors the card's own shrink button.
+            sideButton(icon: "rectangle.expand.vertical", active: false) {
+                SettingsStore.shared.merge(["miniplayer": ["desktop_style": "card"]])
             }
-            .disabled(!hasTrack)
+            .help(L10n.tr("ขยายเป็นการ์ดปกเต็ม", "Expand to artwork card"))
         }
     }
 
