@@ -76,6 +76,7 @@ final class SettingsStore: ObservableObject {
                 "animation_quality": "high",
                 "artwork_style": "classic",
                 "animation_fullscreen": false,
+                "lyrics": false,
             ],
             "widget": [
                 "large_artwork_style": "normal",

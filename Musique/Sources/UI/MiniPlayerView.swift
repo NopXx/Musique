@@ -4,6 +4,21 @@ import AppKit
 struct MiniPlayerView: View {
     @ObservedObject var viewModel: MiniPlayerViewModel
     @State private var showEditPopover: Bool = false
+    @State private var lyrics: [LyricLine] = []
+    @Namespace private var coverSpace
+    /// False while the cover morphs back from the lyrics thumbnail; the clip
+    /// waits for it so the still cover underneath is what does the moving.
+    @State private var videoSettled = true
+    @State private var settleTask: Task<Void, Never>?
+
+    /// A track with no synced lyrics keeps its cover rather than an empty column.
+    private var showsLyrics: Bool { viewModel.lyricsEnabled && !lyrics.isEmpty }
+
+    /// One lookup per track, and none at all while lyrics are off.
+    private var lyricsTaskKey: String {
+        guard viewModel.lyricsEnabled, let snap = viewModel.snapshot else { return "" }
+        return LyricsLookupIdentity.key(for: snap) ?? ""
+    }
 
     private var animationsOn: Bool { viewModel.miniplayerAnimation != "off" }
     private var hasAnimation: Bool {
@@ -19,9 +34,13 @@ struct MiniPlayerView: View {
 
     var body: some View {
         Group {
-            if viewModel.artworkStyle == "fullbleed" {
+            // Lyrics live in the square layout's artwork slot; the other two have
+            // no room above the controls for a column of text. One `squareLayout`
+            // branch for both modes: two branches are two views to SwiftUI, so the
+            // whole player crossfaded and the cover's matched geometry broke.
+            if viewModel.artworkStyle == "fullbleed" && !showsLyrics {
                 fullBleedLayout
-            } else if hasTallVideo {
+            } else if hasTallVideo && !showsLyrics {
                 tallLayout
             } else {
                 squareLayout
@@ -31,6 +50,26 @@ struct MiniPlayerView: View {
         .clipped()
         .overlay { editOverlay }
         .animation(.easeInOut(duration: 0.7), value: viewModel.palette.accent)
+        .animation(Self.coverMove, value: showsLyrics)
+        .onChange(of: showsLyrics) { _, on in
+            settleTask?.cancel()
+            if on {
+                videoSettled = false
+            } else {
+                settleTask = Task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    guard !Task.isCancelled else { return }
+                    videoSettled = true
+                }
+            }
+        }
+        .task(id: lyricsTaskKey) {
+            lyrics = []
+            guard !lyricsTaskKey.isEmpty, let snap = viewModel.snapshot else { return }
+            lyrics = await LyricsService.shared.lines(artist: snap.artist, title: snap.title,
+                                                     album: snap.album, duration: snap.duration,
+                                                     source: snap.source)
+        }
     }
 
     /// In-panel edit sheet. Presented as an overlay inside the mini player's own
@@ -64,25 +103,70 @@ struct MiniPlayerView: View {
     private var squareLayout: some View {
         ZStack {
             blurredBackdrop
-            VStack(spacing: 0) {
-                squareArtwork
-                    .padding(.horizontal, 24)
-                    .padding(.top, 28)
-                Spacer(minLength: 0)
+            // Separate leaves, not one header block, so each gets its own timing:
+            // the cover moves first, the words follow it in and leave before it.
+            ZStack(alignment: .topLeading) {
+                if showsLyrics {
+                    lyricsThumb
+                        .padding(.leading, 22)
+                        .padding(.top, 20)
+                } else {
+                    squareArtwork
+                        .padding(.horizontal, 24)
+                        .padding(.top, 28)
+                }
+                // Gone at once when lyrics open (a clip left in a shrinking view
+                // would stay full size); back with a fade once the still has landed.
+                if !showsLyrics && videoSettled {
+                    squareVideo
+                        .padding(.horizontal, 24)
+                        .padding(.top, 28)
+                        .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.2)),
+                                                removal: .identity))
+                }
+                if showsLyrics {
+                    lyricsTitle
+                        .frame(height: 52)
+                        .padding(.leading, 22 + 52 + 12)
+                        .padding(.trailing, 22)
+                        .padding(.top, 20)
+                        .transition(Self.textIn)
+                }
+                if showsLyrics, let snap = viewModel.snapshot {
+                    // Runs down over the hidden title and badge, to the progress bar.
+                    FullscreenLyricsView(lines: lyrics, position: snap.position,
+                                         isPlaying: snap.isPlaying,
+                                         currentSize: 16, otherSize: 13,
+                                         spacing: 7, edgePadding: 90)
+                        .frame(height: 290)
+                        .padding(.horizontal, 22)
+                        .padding(.top, 20 + 52 + 6)
+                        .transition(Self.textIn)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             bottomFade
             VStack(spacing: 0) {
                 Spacer()
                 VStack(alignment: .leading, spacing: 0) {
-                    HStack { sourceBadge(); Spacer() }
-                        .padding(.bottom, 6)
-                    MarqueeText(text: viewModel.snapshot?.title.nilIfEmpty ?? L10n.miniplayerNoTrack,
-                                font: .system(size: 17, weight: .bold),
-                                color: .white)
-                    MarqueeText(text: metaLine(),
-                                font: .system(size: 13, weight: .medium),
-                                color: .white.opacity(0.65))
-                        .padding(.top, 4)
+                    // The lyrics header already carries the title. Hidden, not removed:
+                    // removing it would pull the progress bar and transport up.
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack { sourceBadge(); Spacer() }
+                            .padding(.bottom, 2)
+                        MarqueeText(text: viewModel.snapshot?.title.nilIfEmpty ?? L10n.miniplayerNoTrack,
+                                    font: .system(size: 17, weight: .bold),
+                                    color: .white)
+                        MarqueeText(text: metaLine(),
+                                    font: .system(size: 13, weight: .medium),
+                                    color: .white.opacity(0.65))
+                    }
+                    // Rides the cover's bottom edge up to the thumbnail and back.
+                    .offset(y: showsLyrics ? -Self.ride : 0)
+                    .animation(Self.coverMove, value: showsLyrics)
+                    .opacity(showsLyrics ? 0 : 1)
+                    .animation(showsLyrics ? Self.fadeOut : Self.fadeIn, value: showsLyrics)
+                    .accessibilityHidden(showsLyrics)
                     VStack(spacing: 5) {
                         progressBar(height: 4)
                         HStack {
@@ -119,15 +203,14 @@ struct MiniPlayerView: View {
                     .opacity(canControl ? 1 : 0.35)
                     HStack {
                         Spacer()
+                        footerButton(icon: viewModel.lyricsEnabled ? "quote.bubble.fill" : "quote.bubble",
+                                     active: viewModel.lyricsEnabled,
+                                     action: viewModel.toggleLyrics)
+                            .disabled(viewModel.snapshot?.hasTrack != true)
                         sourceMenuButton()
                         footerButton(icon: "pencil", action: openEdit)
                             .disabled(viewModel.snapshot?.hasTrack != true)
-                        footerButton(icon: fullscreenIcon, action: openDesktopFullscreen)
-                            .disabled(viewModel.snapshot?.hasTrack != true)
                         footerButton(icon: "gearshape.fill", action: openSettings)
-                        footerButton(icon: viewModel.notificationsEnabled ? "bell.fill" : "bell.slash.fill",
-                                     active: viewModel.notificationsEnabled,
-                                     action: viewModel.toggleNotifications)
                         footerButton(icon: "power", action: quit)
                         Spacer()
                     }
@@ -172,11 +255,9 @@ struct MiniPlayerView: View {
     @ViewBuilder
     private var squareArtwork: some View {
         ZStack {
-            if animationsOn,
-               let s = viewModel.artwork.animationURL, !s.isEmpty,
-               let url = URL(string: s) {
-                AnimatedArtworkView(url: url, contentMode: .fill, cornerRadius: 14)
-            } else if let s = viewModel.artwork.artworkURL, let url = URL(string: s) {
+            // Always the still: SwiftUI can't resize an AppKit-hosted player per
+            // frame, so the motion clip sits on top in `squareVideo` instead.
+            if let s = viewModel.artwork.artworkURL, let url = URL(string: s) {
                 AsyncImage(url: url) { phase in
                     if let img = phase.image {
                         img.resizable().aspectRatio(contentMode: .fill)
@@ -195,14 +276,80 @@ struct MiniPlayerView: View {
                     )
             }
         }
-        .frame(width: 272, height: 272)
+        // Pairs with the lyrics header's thumbnail: the cover shrinks into it.
+        // Clip and match *before* the fixed frame — a frame applied first pins
+        // the size, and the effect can then only slide the cover, not resize it.
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(alignment: .topTrailing) {
-            motionBadge
-                .padding(10)
-        }
+        .matchedGeometryEffect(id: "cover", in: coverSpace)
+        .frame(width: 272, height: 272)
         .shadow(color: .black.opacity(0.55), radius: 20, x: 0, y: 16)
         .onTapGesture { openFullscreenAnimation() }
+    }
+
+    /// The motion clip, laid exactly over `squareArtwork`'s still.
+    @ViewBuilder
+    private var squareVideo: some View {
+        if animationsOn,
+           let s = viewModel.artwork.animationURL, !s.isEmpty,
+           let url = URL(string: s) {
+            AnimatedArtworkView(url: url, contentMode: .fill, cornerRadius: 14)
+                .frame(width: 272, height: 272)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(alignment: .topTrailing) {
+                    motionBadge
+                        .padding(10)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { openFullscreenAnimation() }
+        }
+    }
+
+    // Apple Music's lyrics switch, read off a 30 fps capture: the cover moves in
+    // ~0.2s with no bounce, and the text next to it rides along with its edge —
+    // fading out while it travels, fading in only once the cover has landed.
+    private static let coverMove = Animation.spring(response: 0.32, dampingFraction: 1)
+    private static let fadeOut = Animation.easeIn(duration: 0.12)
+    private static let fadeIn = Animation.easeOut(duration: 0.18).delay(0.12)
+    /// How far the cover's bottom edge travels between thumbnail and full size.
+    private static let ride: CGFloat = 230
+    /// Header text and lyrics: in place once the thumbnail lands; out by riding
+    /// down with the growing cover.
+    private static let textIn = AnyTransition.asymmetric(
+        insertion: .opacity.animation(fadeIn),
+        removal: AnyTransition.opacity.animation(fadeOut)
+            .combined(with: .offset(y: ride).animation(coverMove)))
+
+    /// The big cover, shrunk into the lyrics header's corner.
+    private var lyricsThumb: some View {
+        Group {
+            if let s = viewModel.artwork.artworkURL, let url = URL(string: s) {
+                AsyncImage(url: url) { phase in
+                    if let img = phase.image {
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        Color.white.opacity(0.08)
+                    }
+                }
+            } else {
+                Color.white.opacity(0.08)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .matchedGeometryEffect(id: "cover", in: coverSpace)
+        .frame(width: 52, height: 52)
+        .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
+        .onTapGesture { openFullscreenAnimation() }
+    }
+
+    private var lyricsTitle: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            MarqueeText(text: viewModel.snapshot?.title.nilIfEmpty ?? L10n.miniplayerNoTrack,
+                        font: .system(size: 15, weight: .bold),
+                        color: .white)
+            MarqueeText(text: metaLine(),
+                        font: .system(size: 12, weight: .medium),
+                        color: .white.opacity(0.65))
+        }
     }
 
     @ViewBuilder
@@ -501,15 +648,14 @@ struct MiniPlayerView: View {
 
             HStack {
                 Spacer()
+                footerButton(icon: viewModel.lyricsEnabled ? "quote.bubble.fill" : "quote.bubble",
+                             active: viewModel.lyricsEnabled,
+                             action: viewModel.toggleLyrics)
+                    .disabled(viewModel.snapshot?.hasTrack != true)
                 sourceMenuButton()
                 footerButton(icon: "pencil", action: openEdit)
                     .disabled(viewModel.snapshot?.hasTrack != true)
-                footerButton(icon: fullscreenIcon, action: openDesktopFullscreen)
-                    .disabled(viewModel.snapshot?.hasTrack != true)
                 footerButton(icon: "gearshape.fill", action: openSettings)
-                footerButton(icon: viewModel.notificationsEnabled ? "bell.fill" : "bell.slash.fill",
-                             active: viewModel.notificationsEnabled,
-                             action: viewModel.toggleNotifications)
                 footerButton(icon: "power", action: quit)
                 Spacer()
             }

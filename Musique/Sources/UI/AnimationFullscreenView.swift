@@ -288,10 +288,15 @@ private struct FullscreenGlyph: View {
 /// anchor — what Spotify and YouTube Music both do. The five fixed slots this
 /// replaces had to blank the middle one to swap its text, which read as the line
 /// vanishing; a column that moves never has to.
-private struct FullscreenLyricsView: View {
+struct FullscreenLyricsView: View {
     let lines: [LyricLine]
     let position: Double
     let isPlaying: Bool
+    /// Defaults are the fullscreen window's; the mini player passes its own.
+    var currentSize: CGFloat = 32
+    var otherSize: CGFloat = 26
+    var spacing: CGFloat = 18
+    var edgePadding: CGFloat = 260
 
     /// Where the sung line parks. Slightly above centre, so what is coming gets
     /// more room than what has gone.
@@ -302,7 +307,7 @@ private struct FullscreenLyricsView: View {
         let current = all.lastIndex { $0.time <= position } ?? 0
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: spacing) {
                     ForEach(all.indices, id: \.self) { n in
                         line(all[n], distance: abs(n - current)).id(n)
                     }
@@ -310,7 +315,7 @@ private struct FullscreenLyricsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Air at both ends, or the first and last lines could never reach
                 // the anchor and the column would jerk at the edges of the song.
-                .padding(.vertical, 260)
+                .padding(.vertical, edgePadding)
                 .animation(.spring(response: 0.34, dampingFraction: 0.78), value: current)
             }
             .scrollDisabled(true)
@@ -345,7 +350,7 @@ private struct FullscreenLyricsView: View {
                                                     : distance == 2 ? 0.2 : 0.12))
             }
         }
-            .font(.system(size: distance == 0 ? 32 : 26,
+            .font(.system(size: distance == 0 ? currentSize : otherSize,
                           weight: distance == 0 ? .bold : .semibold,
                           design: .rounded))
             // Falls off with distance rather than one dim value for everything

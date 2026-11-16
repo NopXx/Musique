@@ -15,6 +15,12 @@ final class MiniPlayerViewModel: ObservableObject {
     @Published var artworkStyle: String = "classic"
     @Published var showFullscreenAnimation: Bool = false
     @Published var animationFullscreenEnabled: Bool = false
+    /// Shared by the popover and the desktop panel, so toggling one flips both.
+    @Published var lyricsEnabled: Bool = false
+
+    func toggleLyrics() {
+        SettingsStore.shared.merge(["miniplayer": ["lyrics": !lyricsEnabled]])
+    }
 
     /// Snapshot of every tracked source, for the source picker dropdown.
     @Published var sourceSnapshots: [PlaybackSource: NowPlayingSnapshot] = [:]
@@ -61,6 +67,7 @@ final class MiniPlayerViewModel: ObservableObject {
         let style = SettingsStore.shared.string(["miniplayer", "artwork_style"])
         self.artworkStyle = style.isEmpty ? "classic" : style
         self.animationFullscreenEnabled = SettingsStore.shared.bool(["miniplayer", "animation_fullscreen"])
+        self.lyricsEnabled = SettingsStore.shared.bool(["miniplayer", "lyrics"])
 
         SettingsStore.shared.$data
             .receive(on: DispatchQueue.main)
@@ -74,6 +81,7 @@ final class MiniPlayerViewModel: ObservableObject {
                 let st = SettingsStore.shared.string(["miniplayer", "artwork_style"])
                 self.artworkStyle = st.isEmpty ? "classic" : st
                 self.animationFullscreenEnabled = SettingsStore.shared.bool(["miniplayer", "animation_fullscreen"])
+                self.lyricsEnabled = SettingsStore.shared.bool(["miniplayer", "lyrics"])
             }
             .store(in: &cancellables)
 
