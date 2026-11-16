@@ -191,6 +191,11 @@ actor LyricsService {
     static let shared = LyricsService()
 
     private var cache: [String: [LyricLine]] = [:]
+    /// Lookups still running, so a second caller for the same track (the
+    /// prefetcher and a view opening at once) joins it instead of racing it.
+    /// Two racing lookups used to finish in either order, and a later empty
+    /// result overwrote the lines the first one had just cached.
+    private var inFlight: [String: Task<[LyricLine], Never>] = [:]
 
     func lines(artist: String, title: String, album: String, duration: Double,
                source: PlaybackSource = .appleMusic) async -> [LyricLine] {
@@ -199,6 +204,22 @@ actor LyricsService {
             NSLog("[Lyrics] Parsed memory cache hit: source=%@ lines=%ld", source.rawValue, hit.count)
             return hit
         }
+        if let running = inFlight[key] { return await running.value }
+        let task = Task {
+            await lookup(artist: artist, title: title, album: album,
+                         duration: duration, source: source)
+        }
+        inFlight[key] = task
+        let lines = await task.value
+        // Cached even when empty: a track with no synced lyrics would otherwise
+        // hit the network again every time the fullscreen window opens.
+        cache[key] = lines
+        inFlight[key] = nil
+        return lines
+    }
+
+    private func lookup(artist: String, title: String, album: String, duration: Double,
+                        source: PlaybackSource) async -> [LyricLine] {
         NSLog("[Lyrics] Lookup started: source=%@ artist=%@ title=%@",
               source.rawValue, artist, title)
         let appleLines = AppleLyricsSourcePolicy.shouldAttemptTTML(for: source)
@@ -208,9 +229,6 @@ actor LyricsService {
         let lines = appleLines.isEmpty
             ? await fetch(artist: artist, title: title, album: album, duration: duration)
             : appleLines
-        // Cached even when empty: a track with no synced lyrics would otherwise
-        // hit the network again every time the fullscreen window opens.
-        cache[key] = lines
         NSLog("[Lyrics] Lookup finished: source=%@ lines=%ld", source.rawValue, lines.count)
         return lines
     }
