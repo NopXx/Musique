@@ -185,13 +185,13 @@ final class MenuBarController {
     // MARK: - Right-click handling
 
     private func installRightClickMonitor() {
-        let local = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown]) { [weak self] event in
+        let local = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseUp]) { [weak self] event in
             self?.handleRightMouse(event)
             return event
         }
         if let local { rightClickMonitors.append(local) }
 
-        let global = NSEvent.addGlobalMonitorForEvents(matching: [.rightMouseDown]) { [weak self] event in
+        let global = NSEvent.addGlobalMonitorForEvents(matching: [.rightMouseUp]) { [weak self] event in
             self?.handleRightMouse(event)
         }
         if let global { rightClickMonitors.append(global) }
@@ -223,10 +223,15 @@ final class MenuBarController {
     }
 
     private func showStatusMenu(_ button: NSStatusBarButton) {
-        let menu = buildContextMenu()
-        menu.popUp(positioning: nil,
-                   at: NSPoint(x: 0, y: button.bounds.height + 4),
-                   in: button)
+        // Opened on rightMouseUp, not down: a menu opened on mouse-down is closed
+        // by that same click's mouse-up. Async: leave the monitor callback before
+        // the menu's tracking loop starts.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.buildContextMenu().popUp(positioning: nil,
+                                          at: NSPoint(x: 0, y: button.bounds.height + 4),
+                                          in: button)
+        }
     }
 
     @objc private func openSettingsAction() {
