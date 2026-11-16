@@ -48,7 +48,7 @@ struct AnimationFullscreenView: View {
 
     private var trackKey: String {
         guard let snap = viewModel.snapshot else { return "" }
-        return "\(snap.artist)|\(snap.title)|\(snap.album)"
+        return LyricsLookupIdentity.key(for: snap) ?? ""
     }
 
     /// Lyrics get a layout of their own rather than a panel over the cover: a
@@ -150,9 +150,10 @@ struct AnimationFullscreenView: View {
             lyrics = []
             guard let snap = viewModel.snapshot, snap.hasTrack else { return }
             lyricsPending = true
+            defer { lyricsPending = false }
             lyrics = await LyricsService.shared.lines(artist: snap.artist, title: snap.title,
-                                                     album: snap.album, duration: snap.duration)
-            lyricsPending = false
+                                                     album: snap.album, duration: snap.duration,
+                                                     source: snap.source)
         }
     }
 
@@ -198,7 +199,8 @@ struct AnimationFullscreenView: View {
                 .frame(width: geo.size.width * 0.45)
 
             if let snap = viewModel.snapshot {
-                FullscreenLyricsView(lines: lyrics, position: snap.position)
+                FullscreenLyricsView(lines: lyrics, position: snap.position,
+                                     isPlaying: snap.isPlaying)
                     .frame(maxWidth: .infinity)
                     .padding(.trailing, 56)
                     .allowsHitTesting(false)
@@ -289,6 +291,7 @@ private struct FullscreenGlyph: View {
 private struct FullscreenLyricsView: View {
     let lines: [LyricLine]
     let position: Double
+    let isPlaying: Bool
 
     /// Where the sung line parks. Slightly above centre, so what is coming gets
     /// more room than what has gone.
@@ -332,7 +335,16 @@ private struct FullscreenLyricsView: View {
 
     @ViewBuilder
     private func line(_ l: LyricLine, distance: Int) -> some View {
-        Text(l.text.isEmpty ? " " : l.text)
+        Group {
+            if distance == 0, !l.segments.isEmpty {
+                KaraokeLyricText(line: l, position: position, isPlaying: isPlaying)
+            } else {
+                Text(l.text.isEmpty ? " " : l.text)
+                    .foregroundStyle(.white.opacity(distance == 0 ? 1
+                                                    : distance == 1 ? 0.4
+                                                    : distance == 2 ? 0.2 : 0.12))
+            }
+        }
             .font(.system(size: distance == 0 ? 32 : 26,
                           weight: distance == 0 ? .bold : .semibold,
                           design: .rounded))
@@ -340,11 +352,9 @@ private struct FullscreenLyricsView: View {
             // else: it's what gives the column a reading position. Sung and unsung
             // dim the same amount — both players do that, and telling them apart
             // only invited the eye to read backwards.
-            .foregroundStyle(.white.opacity(distance == 0 ? 1
-                                            : distance == 1 ? 0.4
-                                            : distance == 2 ? 0.2 : 0.12))
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(l.text)
     }
 
     /// `lines` with a dots marker dropped into every stretch of the song nobody
@@ -375,4 +385,84 @@ private struct FullscreenLyricsView: View {
     /// Long enough that the pause is deliberate rather than a singer drawing breath.
     private let gap = 5.0
     private let dots = "• • •"
+}
+
+/// Renders just the current line on an animation clock. The player snapshot only
+/// advances once per second, so the local clock extrapolates between snapshots;
+/// otherwise several short Korean syllables would light up in a single jump.
+private struct KaraokeLyricText: View {
+    let line: LyricLine
+    let position: Double
+    let isPlaying: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var anchorPosition: Double
+    @State private var anchorDate: Date
+
+    init(line: LyricLine, position: Double, isPlaying: Bool) {
+        self.line = line
+        self.position = position
+        self.isPlaying = isPlaying
+        _anchorPosition = State(initialValue: position)
+        _anchorDate = State(initialValue: Date())
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0,
+                                paused: !isPlaying || reduceMotion)) { context in
+            highlightedText(at: livePosition(context.date))
+        }
+        .onChange(of: position) { _, newPosition in
+            anchorPosition = newPosition
+            anchorDate = Date()
+        }
+        .onChange(of: isPlaying) { _, _ in
+            anchorPosition = position
+            anchorDate = Date()
+        }
+    }
+
+    private func livePosition(_ date: Date) -> Double {
+        guard isPlaying, !reduceMotion else { return position }
+        return anchorPosition + date.timeIntervalSince(anchorDate)
+    }
+
+    /// Builds one wrapping SwiftUI Text while retaining the literal whitespace in
+    /// the complete TTML line. MusanovaKit's segment text omits those separators,
+    /// so each segment is located sequentially inside the original line.
+    private func highlightedText(at playbackPosition: Double) -> Text {
+        let content = line.text.isEmpty ? " " : line.text
+        guard !line.segments.isEmpty else { return Text(content).foregroundColor(.white) }
+
+        var result = Text("")
+        var cursor = content.startIndex
+        var matchedAny = false
+
+        for segment in line.segments {
+            guard cursor < content.endIndex,
+                  let range = content.range(of: segment.text,
+                                            range: cursor..<content.endIndex) else { continue }
+            let opacity = segment.highlightOpacity(at: playbackPosition)
+            if cursor < range.lowerBound {
+                result = result + styled(String(content[cursor..<range.lowerBound]), opacity: opacity)
+            }
+            result = result + styled(String(content[range]), opacity: opacity)
+            cursor = range.upperBound
+            matchedAny = true
+        }
+
+        guard matchedAny else { return Text(content).foregroundColor(.white) }
+        if cursor < content.endIndex {
+            let opacity = line.segments.last.map {
+                $0.highlightOpacity(at: playbackPosition)
+            } ?? 1
+            result = result + styled(String(content[cursor...]), opacity: opacity)
+        }
+        return result
+    }
+
+    private func styled(_ text: String, opacity: Double) -> Text {
+        Text(text).foregroundColor(.white.opacity(opacity))
+    }
+
 }

@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationService.shared.attach(monitor: playerMonitor, scrobbler: scrobbler)
         WebhookDispatcher.shared.attach(monitor: playerMonitor, scrobbler: scrobbler)
         HistoryRecorder.shared.attach(monitor: playerMonitor, scrobbler: scrobbler)
+        LyricsPrefetcher.shared.attach(monitor: playerMonitor)
         PendingScrobbleQueue.shared.start()
         DebugServer.shared.attach(monitor: playerMonitor)
         WebScrobblerReceiver.shared.attach(monitor: playerMonitor)

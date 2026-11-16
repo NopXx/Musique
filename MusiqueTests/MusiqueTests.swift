@@ -54,6 +54,57 @@ final class MusiqueTests: XCTestCase {
         XCTAssertEqual(lines.map(\.end), [5.27, 8.95, nil])
     }
 
+    func testTTMLSegmentHighlightProgress() {
+        let segment = TimedLyricSegment(text: "가만히", start: 10, end: 12)
+        XCTAssertEqual(segment.highlightOpacity(at: 9.9), 0.28, accuracy: 0.001)
+        XCTAssertEqual(segment.highlightOpacity(at: 10), 0.35, accuracy: 0.001)
+        XCTAssertEqual(segment.highlightOpacity(at: 11), 0.675, accuracy: 0.001)
+        XCTAssertEqual(segment.highlightOpacity(at: 12), 1, accuracy: 0.001)
+    }
+
+    func testAppleMusicArtistMatcherAcceptsCatalogCollaborators() {
+        XCTAssertTrue(AppleMusicMetadataMatcher.artistsMatch(
+            reported: "IVE", catalog: "IVE & David Guetta"))
+        XCTAssertTrue(AppleMusicMetadataMatcher.artistsMatch(
+            reported: "IVE & Saweetie", catalog: "Saweetie, IVE"))
+        XCTAssertFalse(AppleMusicMetadataMatcher.artistsMatch(
+            reported: "IVE", catalog: "IU"))
+    }
+
+    /// A Spotify snapshot still describes a catalog song. It should be allowed
+    /// through the Apple catalog/TTML path before LyricsService falls back to
+    /// LRCLIB, rather than being rejected solely because of its player source.
+    func testSpotifyCanAttemptAppleMusicTTML() {
+        XCTAssertTrue(AppleLyricsSourcePolicy.shouldAttemptTTML(for: .spotify))
+    }
+
+    func testTTMLCacheKeyIsStableAndFilesystemSafe() {
+        let first = TTMLCacheKey.make(artist: "IVE & Saweetie", title: "All Night / Live?",
+                                      album: "All Night", duration: 198.6)
+        let second = TTMLCacheKey.make(artist: "IVE & Saweetie", title: "All Night / Live?",
+                                       album: "All Night", duration: 198.6)
+
+        XCTAssertEqual(first, second)
+        XCTAssertTrue(first.hasSuffix(".ttml"))
+        XCTAssertFalse(first.contains("/"))
+        XCTAssertFalse(first.contains("?"))
+    }
+
+    func testLyricsLookupIdentityIgnoresPlaybackPosition() {
+        let first = NowPlayingSnapshot(
+            state: "playing", title: "ELEVEN", artist: "IVE", album: "ELEVEN",
+            duration: 178, position: 1, persistentID: "spotify:track:123", source: .spotify
+        )
+        let later = NowPlayingSnapshot(
+            state: "paused", title: "ELEVEN", artist: "IVE", album: "ELEVEN",
+            duration: 178, position: 92, persistentID: "spotify:track:123", source: .spotify
+        )
+
+        XCTAssertEqual(LyricsLookupIdentity.key(for: first),
+                       LyricsLookupIdentity.key(for: later))
+        XCTAssertNotNil(LyricsLookupIdentity.key(for: first))
+    }
+
     /// The wallpaper-store rewrite must re-point every Desktop node at our
     /// extension while leaving Idle (screen-saver) nodes untouched.
     func testWallpaperRewriteTargetsDesktopOnly() {
