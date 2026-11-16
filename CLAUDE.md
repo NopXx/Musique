@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Musique — native macOS menu bar companion for Apple Music **and Spotify** (Last.fm scrobbling, history, webhooks, mini player, lock screen overlay, real-time audio waveform). Swift / SwiftUI, talks to each player via ScriptingBridge + distributed notifications (`com.apple.Music.playerInfo`, `com.spotify.client.PlaybackStateChanged`).
+Musique — native macOS menu bar companion for Apple Music, Spotify and browser players via Web Scrobbler (Last.fm scrobbling, history, webhooks, mini player + free-standing desktop player, time-synced lyrics, lock screen overlay, real-time audio waveform). Swift / SwiftUI, talks to each player via ScriptingBridge + distributed notifications (`com.apple.Music.playerInfo`, `com.spotify.client.PlaybackStateChanged`).
 
 The folder is named `MusicMate` (legacy); the app and all targets were renamed to `Musique` (see commit `47bdcf7`).
 
@@ -35,6 +35,19 @@ xcodebuild -project Musique.xcodeproj -scheme Musique -destination 'platform=mac
 # single test
 xcodebuild -project Musique.xcodeproj -scheme Musique -destination 'platform=macOS' test -only-testing:MusiqueTests/<ClassName>/<testMethod>
 ```
+
+### Release
+
+Bump `MARKETING_VERSION` + `CURRENT_PROJECT_VERSION` in `project.yml` (branch + PR, like any change), then build the DMG from a **clean checkout of the merged commit**, never the working tree — uncommitted local work would ship otherwise:
+
+```sh
+git worktree add --detach /tmp/musique-release <merge-commit>
+cp Secrets.xcconfig /tmp/musique-release/ && cd /tmp/musique-release
+./scripts/build-dmg.sh            # → build/dmg/Musique-<version>.dmg
+gh release create v<version> build/dmg/Musique-<version>.dmg --target <merge-commit> --notes-file …
+```
+
+The DMG is signed Apple Development and not notarized.
 
 Other scripts: `scripts/build-dmg.sh`, `scripts/clean-builds.sh`, `scripts/wipe-user-data.sh` (clears `~/Library/Application Support/Musique/`).
 
@@ -78,6 +91,8 @@ PlayerMonitor ──► ScrobblerService ──► Last.fm
               ├─► HistoryRecorder ──► HistoryStore (SQLite actor)
               ├─► WidgetDataManager ──► App Group JSON + WidgetCenter reload
               ├─► MenuBarController + MiniPlayer (SwiftUI)
+              ├─► DesktopMiniPlayerController ──► DesktopPlayerView / DesktopCompactPlayerView
+              ├─► LyricsPrefetcher ──► LyricsService (Music app cache → Apple TTML → LRCLIB)
               └─► LockScreenController ──► SkyLightOperator (private CGS space pinning)
 
 MusicAudioLevelMonitor ──► CATapDescription + AudioHardwareCreateProcessTap
@@ -107,7 +122,11 @@ MusicAudioLevelMonitor ──► CATapDescription + AudioHardwareCreateProcessTa
   - While faded *and* enlarged the controller sets `window.ignoresMouseEvents = true` — the only thing that lets a click through, since AppKit hit-tests a window by frame, not pixel alpha (`allowsHitTesting(false)` would swallow it instead). Never set when nothing is enlarged, or the card's own taps die. Keyboard needs nothing: a borderless window can't become key, which is also the escape hatch (type the password blind). Clicking anywhere shrinks.
 - **Audio waveform** needs `NSAudioCaptureUsageDescription` and Core Audio Process Tap (macOS 14.2+).
 - **DebugServer** — opt-in loopback HTTP server (`Network.framework`, default port 8765, `127.0.0.1` only), toggled in Settings. Serves the `web/` dashboard + JSON endpoints: `/api/all`, `/api/snapshot`, `/api/raw` (`?refresh=1` / `/api/raw/refresh` forces a fresh ScriptingBridge read), `/api/pending`, `/api/history/songs`, `/api/history/detail`, `/api/artwork`, `/api/lyrics`, `/api/settings`, `/api/audio`. `@MainActor`, attached to `PlayerMonitor` at launch in `App.swift`.
-- **Apple Music TTML lyrics** — tracks from every source (Apple Music, Spotify, Web Scrobbler) resolve an Apple catalog ID and use MusanovaKit's private `/syllable-lyrics` request and parser; the raw TTML is cached on disk under `~/Library/Application Support/Musique/TTML/`, and LRCLIB remains the fallback. `LyricsPrefetcher` fetches on every track change, so the cache doesn't depend on opening fullscreen. The fullscreen view retains and animates per-syllable timing. Read [docs/apple-music-ttml.md](docs/apple-music-ttml.md) before changing this system.
+- **Time-synced lyrics** (`Lyrics/LyricsService.swift`) — tracks from every source resolve an Apple catalog ID. TTML comes from, in order: the raw-TTML disk cache (`~/Library/Application Support/Musique/TTML/`), the **Music app's own URL cache** (`MusicAppLyricsCache` — Apple serves some tracks, much K-pop, only to its own client; every endpoint 404s for the borrowed AMPWebPlay token), the Music-app-style `songs?filter[equivalents]=…&include=syllable-lyrics` request (TTML under `ttmlLocalizations`), the bare `syllable-lyrics`, then plain line-timed `lyrics`. LRCLIB is the fallback; its `lyricsfile` YAML can carry per-word timing. **Word timing wins whichever side has it** (`LyricsService.preferred`); between two line-timed copies Apple's wins. Lookups for one track are joined, never raced. `LyricsPrefetcher` fetches on every track change. Read [docs/apple-music-ttml.md](docs/apple-music-ttml.md) before changing this system.
+- **Lyrics rendering** — `FullscreenLyricsView` (in `AnimationFullscreenView.swift`) is the one lyrics column for fullscreen, popover and both desktop designs: it projects playback position **per frame** (`NowPlayingSnapshot.livePosition(at:)`; `PlayerMonitor` resyncs the real player position every 5 s) and scrolls the whole column as one, the sung line parked at `anchor` (0.14, the card's panel uses 0.5). `KaraokeLyricText` draws through a `TextRenderer` (`SungWordRenderer`): gradient wipe + glow per segment, and segments ≥ 1 s (`heldNote`) light letter by letter and rise. `LyricsLookup` is the shared fetch-on-track-change modifier with loading / "no lyrics" states.
+- **Desktop mini player** — `DesktopMiniPlayerController` owns a borderless non-activating `NSPanel` driven by `miniplayer.desktop_enabled` / `desktop_level` / `desktop_style` (`card` | `compact`; `classic` still renders `MiniPlayerView` but has no UI path). Designs are switched **from the player** (no Settings picker — it wrote stale values back). `desktop_lyrics` is its own flag, apart from the popover's `lyrics`.
+  - **The controller owns the window size.** SwiftUI sits in a plain autoresizing container `NSView`, never as the content view itself: a hosting view as content view pushed min/max sizes onto the window every update and AppKit threw on the constraint-pass loop. `sizingOptions = []` alone did not stop it.
+  - Lyrics grow the window — the glass bar downward, the card **sideways**: right, or left when the screen has no room, so the card never moves on screen (`leftGrowth` remembers which). The view gets the side back from `onLyricsShown` and expands only on the next run-loop turn, after the window has grown; `place` lays SwiftUI out before and right after every `setFrame`. Without both, a frame of the old layout showed at the new origin and the card jumped by the panel width and slid back.
 - **Desktop-wallpaper takeover is OFF** — `LockScreenController.wallpaperTakeoverEnabled = false` gates `syncWallpaper`, `syncMotionWallpaper` and `prewarmWallpaper`. The overlay above draws the artwork itself, so hijacking the real desktop bought nothing and cost a WallpaperAgent bounce, an `Index.plist` rewrite and a class of stuck-wallpaper bugs. The code below is kept, inert, so re-enabling is a one-word edit; `lockscreen.set_system_wallpaper` still exists in settings but has no UI row.
   - **Recovery stays unconditional** and must not be moved behind the flag: `MotionWallpaperStore.healIfStuck()` and `SystemWallpaperOperator.recoverIfNeeded()` at init, plus the `willTerminate` restore. An older build may have left a desktop hijacked and only these hand it back.
 - **Motion wallpaper** (`MotionWallpaperController` + `MotionWallpaperStore`, disabled — see above; it was gated on `lockscreen.set_system_wallpaper` and live only while locked *and* the artwork was enlarged) makes the animated artwork the real desktop wallpaper: stage the clip into `<app group>/videos`, rewrite every `Desktop` node in `~/Library/Application Support/com.apple.wallpaper/Store/Index.plist` to our provider, reload WallpaperAgent. Later tracks only overwrite the staged clip + post a Darwin notification (`…wallpaper.switch`) so the appex swaps on the live surface — no reload flash.
@@ -128,21 +147,26 @@ Musique/Sources/
     Bridge/        Music.h (sdef-generated) + MusicStubs.m,
                    Spotify.h (hand-written) + SpotifyStubs.m
   Scrobbler/       LastFMClient, ScrobblerService, PendingScrobbleQueue
-  Artwork/         ArtworkService (actor, hits apple-music-artwork-search.vercel.app),
+  Artwork/         ArtworkService (actor; apple-music-artwork.nopxx.site, term = the
+                   matched Apple Music album URL when iTunes Search finds one),
                    ColorExtractor (accent + gradient)
   History/         HistoryStore, HistoryRecorder, EditHistoryService
+  Lyrics/          LyricsService (Apple TTML client, MusicAppLyricsCache, LRCLIB,
+                   LyricsFile/LRC parsers, LyricsPrefetcher)
   Notifications/   NotificationService
   Webhooks/        WebhookDispatcher
   Helpers/         L10n (runtime i18n via SettingsStore["language"]),
                    TextShape (Core Text glyph outlines as a SwiftUI Shape)
   Settings/        SettingsStore (JSON deep-merged with defaults; public snapshot
                    strips api_secret)
-  Services/        DebugServer (loopback HTTP debug dashboard)
+  Services/        DebugServer (loopback HTTP, serves web/), LaunchAtLoginService
   UI/              MenuBarController, MenuBarDynamicIslandView, MiniPlayer*,
                    SettingsView, AnimatedArtworkView, AnimatedArtworkCache,
                    AnimationFullscreen*, FullscreenArtworkView +
                    ArtworkBackdrop (shared by the lock screen and the mini
-                   player's fullscreen window)
+                   player's fullscreen window), DesktopMiniPlayerController +
+                   DesktopPlayerView (card) + DesktopCompactPlayerView (glass
+                   bar), LyricsLookup
     LockScreen/    LockScreenController, SkyLightOperator, LockScreenWindow,
                    LockScreenPlayerView, SystemWallpaperOperator (lock-only
                    static artwork wallpaper)
@@ -178,7 +202,12 @@ loses all of them; `tccutil reset All com.nopxx.musique` re-prompts for everythi
 Reading the app's own logs: `log` is a **zsh builtin**, so `log show …` in this
 shell errors with `too many arguments` and prints nothing useful — use
 `/usr/bin/log show --predicate 'subsystem == "com.nopxx.musique"' --last 15m --info`
-(without `--info` the `Logger.info` lines are missing).
+(without `--info` the `Logger.info` lines are missing). Lyrics and some older
+code log with `NSLog`, which has no subsystem — filter those by process:
+`/usr/bin/log show --predicate 'process == "Musique" AND eventMessage CONTAINS "[Lyrics]"' --last 15m`.
+
+Lyrics need **MusicKit authorization** (Apple Music subscriber) for the TTML
+requests; `MusicAppLyricsCache` reads `~/Library/Caches/com.apple.Music/`.
 
 ## Known issues
 
