@@ -21,6 +21,13 @@ final class MiniPlayerViewModel: ObservableObject {
     func toggleLyrics() {
         SettingsStore.shared.merge(["miniplayer": ["lyrics": !lyricsEnabled]])
     }
+    /// The desktop panel's own lyrics switch, kept apart from the popover's: the
+    /// two are different windows and are wanted different ways.
+    @Published var desktopLyricsEnabled: Bool = false
+
+    func toggleDesktopLyrics() {
+        SettingsStore.shared.merge(["miniplayer": ["desktop_lyrics": !desktopLyricsEnabled]])
+    }
 
     /// Snapshot of every tracked source, for the source picker dropdown.
     @Published var sourceSnapshots: [PlaybackSource: NowPlayingSnapshot] = [:]
@@ -68,6 +75,7 @@ final class MiniPlayerViewModel: ObservableObject {
         self.artworkStyle = style.isEmpty ? "classic" : style
         self.animationFullscreenEnabled = SettingsStore.shared.bool(["miniplayer", "animation_fullscreen"])
         self.lyricsEnabled = SettingsStore.shared.bool(["miniplayer", "lyrics"])
+        self.desktopLyricsEnabled = SettingsStore.shared.bool(["miniplayer", "desktop_lyrics"])
 
         SettingsStore.shared.$data
             .receive(on: DispatchQueue.main)
@@ -82,6 +90,7 @@ final class MiniPlayerViewModel: ObservableObject {
                 self.artworkStyle = st.isEmpty ? "classic" : st
                 self.animationFullscreenEnabled = SettingsStore.shared.bool(["miniplayer", "animation_fullscreen"])
                 self.lyricsEnabled = SettingsStore.shared.bool(["miniplayer", "lyrics"])
+                self.desktopLyricsEnabled = SettingsStore.shared.bool(["miniplayer", "desktop_lyrics"])
             }
             .store(in: &cancellables)
 

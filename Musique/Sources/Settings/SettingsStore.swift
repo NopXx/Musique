@@ -80,6 +80,7 @@ final class SettingsStore: ObservableObject {
                 "desktop_level": "floating",
                 "desktop_style": "card",
                 "lyrics": false,
+                "desktop_lyrics": false,
             ],
             "widget": [
                 "large_artwork_style": "normal",

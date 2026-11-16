@@ -4,7 +4,15 @@ import AppKit
 struct MiniPlayerView: View {
     @ObservedObject var viewModel: MiniPlayerViewModel
     @State private var showEditPopover: Bool = false
+    /// Hosted in the desktop panel (`classic` style) rather than the popover:
+    /// reads and flips the desktop's own lyrics switch.
+    var onDesktop = false
+    private var lyricsOn: Bool { onDesktop ? viewModel.desktopLyricsEnabled : viewModel.lyricsEnabled }
+    private func toggleLyrics() {
+        onDesktop ? viewModel.toggleDesktopLyrics() : viewModel.toggleLyrics()
+    }
     @State private var lyrics: [LyricLine] = []
+    @State private var lyricsLoading = false
     @Namespace private var coverSpace
     /// False while the cover morphs back from the lyrics thumbnail; the clip
     /// waits for it so the still cover underneath is what does the moving.
@@ -12,13 +20,9 @@ struct MiniPlayerView: View {
     @State private var settleTask: Task<Void, Never>?
 
     /// A track with no synced lyrics keeps its cover rather than an empty column.
-    private var showsLyrics: Bool { viewModel.lyricsEnabled && !lyrics.isEmpty }
+    /// Open whenever it's on — loading, found, or found nothing (which it says).
+    private var showsLyrics: Bool { lyricsOn && viewModel.snapshot?.hasTrack == true }
 
-    /// One lookup per track, and none at all while lyrics are off.
-    private var lyricsTaskKey: String {
-        guard viewModel.lyricsEnabled, let snap = viewModel.snapshot else { return "" }
-        return LyricsLookupIdentity.key(for: snap) ?? ""
-    }
 
     private var animationsOn: Bool { viewModel.miniplayerAnimation != "off" }
     private var hasAnimation: Bool {
@@ -63,13 +67,8 @@ struct MiniPlayerView: View {
                 }
             }
         }
-        .task(id: lyricsTaskKey) {
-            lyrics = []
-            guard !lyricsTaskKey.isEmpty, let snap = viewModel.snapshot else { return }
-            lyrics = await LyricsService.shared.lines(artist: snap.artist, title: snap.title,
-                                                     album: snap.album, duration: snap.duration,
-                                                     source: snap.source)
-        }
+        .lyricsLookup(enabled: lyricsOn, snapshot: viewModel.snapshot,
+                      lines: $lyrics, loading: $lyricsLoading)
     }
 
     /// In-panel edit sheet. Presented as an overlay inside the mini player's own
@@ -134,10 +133,14 @@ struct MiniPlayerView: View {
                 }
                 if showsLyrics, let snap = viewModel.snapshot {
                     // Runs down over the hidden title and badge, to the progress bar.
-                    FullscreenLyricsView(lines: lyrics, position: snap.position,
-                                         isPlaying: snap.isPlaying,
-                                         currentSize: 16, otherSize: 13,
-                                         spacing: 7, edgePadding: 90)
+                    Group {
+                        if lyrics.isEmpty {
+                            LyricsStatusView(loading: lyricsLoading)
+                        } else {
+                            FullscreenLyricsView(lines: lyrics, playback: snap, fontSize: 17, spacing: 12)
+                        }
+                    }
+                        .frame(maxWidth: .infinity)
                         .frame(height: 290)
                         .padding(.horizontal, 22)
                         .padding(.top, 20 + 52 + 6)
@@ -203,9 +206,9 @@ struct MiniPlayerView: View {
                     .opacity(canControl ? 1 : 0.35)
                     HStack {
                         Spacer()
-                        footerButton(icon: viewModel.lyricsEnabled ? "quote.bubble.fill" : "quote.bubble",
-                                     active: viewModel.lyricsEnabled,
-                                     action: viewModel.toggleLyrics)
+                        footerButton(icon: lyricsOn ? "quote.bubble.fill" : "quote.bubble",
+                                     active: lyricsOn,
+                                     action: toggleLyrics)
                             .disabled(viewModel.snapshot?.hasTrack != true)
                         sourceMenuButton()
                         footerButton(icon: "pencil", action: openEdit)
@@ -648,9 +651,9 @@ struct MiniPlayerView: View {
 
             HStack {
                 Spacer()
-                footerButton(icon: viewModel.lyricsEnabled ? "quote.bubble.fill" : "quote.bubble",
-                             active: viewModel.lyricsEnabled,
-                             action: viewModel.toggleLyrics)
+                footerButton(icon: lyricsOn ? "quote.bubble.fill" : "quote.bubble",
+                             active: lyricsOn,
+                             action: toggleLyrics)
                     .disabled(viewModel.snapshot?.hasTrack != true)
                 sourceMenuButton()
                 footerButton(icon: "pencil", action: openEdit)

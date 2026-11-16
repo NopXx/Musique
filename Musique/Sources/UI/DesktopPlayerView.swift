@@ -12,6 +12,7 @@ struct DesktopPlayerView: View {
     @ObservedObject var viewModel: MiniPlayerViewModel
     var onLyricsShown: (Bool) -> Void = { _ in }
     @State private var lyrics: [LyricLine] = []
+    @State private var lyricsLoading = false
     /// Drives the strip's height. Lags `showsLyrics` on the way in (window first,
     /// then the strip slides down) and leads it on the way out (strip first, then
     /// the window shrinks) — an animated window resize made the card jump.
@@ -23,13 +24,9 @@ struct DesktopPlayerView: View {
 
     private var snap: NowPlayingSnapshot? { viewModel.snapshot }
     private var hasTrack: Bool { snap?.hasTrack == true }
-    private var showsLyrics: Bool { viewModel.lyricsEnabled && !lyrics.isEmpty }
+    private var showsLyrics: Bool { viewModel.desktopLyricsEnabled && hasTrack }
     private var canControl: Bool { snap?.source.isControllable ?? true }
 
-    private var lyricsTaskKey: String {
-        guard viewModel.lyricsEnabled, let snap else { return "" }
-        return LyricsLookupIdentity.key(for: snap) ?? ""
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,7 +45,9 @@ struct DesktopPlayerView: View {
         // The window is already tall while the strip grows; below the card is clear.
         .frame(maxHeight: .infinity, alignment: .top)
         .animation(.easeInOut(duration: 0.7), value: viewModel.palette.accent)
-        .onChange(of: showsLyrics) { _, on in
+        // Initial too: switching design builds this view with lyrics already on,
+        // and waiting for a change left the strip shut until toggled off and on.
+        .onChange(of: showsLyrics, initial: true) { _, on in
             if on {
                 onLyricsShown(true)
                 withAnimation(Self.stripMove) { expanded = true }
@@ -64,13 +63,8 @@ struct DesktopPlayerView: View {
                 SettingsStore.shared.merge(["miniplayer": ["desktop_enabled": false]])
             }
         }
-        .task(id: lyricsTaskKey) {
-            lyrics = []
-            guard !lyricsTaskKey.isEmpty, let snap else { return }
-            lyrics = await LyricsService.shared.lines(artist: snap.artist, title: snap.title,
-                                                     album: snap.album, duration: snap.duration,
-                                                     source: snap.source)
-        }
+        .lyricsLookup(enabled: viewModel.desktopLyricsEnabled, snapshot: snap,
+                      lines: $lyrics, loading: $lyricsLoading)
     }
 
     // MARK: - Layers
@@ -102,36 +96,37 @@ struct DesktopPlayerView: View {
     /// any sleeve. Palette tint over a dark base, the same recipe the mini
     /// player's bottom fade uses.
     private var bottomFade: some View {
-        let tint = Color(viewModel.palette.gradientStart)
-        return ZStack {
-            LinearGradient(colors: [.clear, .black.opacity(0.25), .black.opacity(0.6)],
-                           startPoint: .top, endPoint: .bottom)
-            LinearGradient(colors: [.clear, tint.opacity(0.55), tint.opacity(0.85)],
-                           startPoint: .top, endPoint: .bottom)
-        }
-        .frame(height: Self.size * 0.55)
-        .allowsHitTesting(false)
+        LinearGradient(colors: [.clear, shade.opacity(0.75), shade],
+                       startPoint: .top, endPoint: .bottom)
+            .frame(height: Self.size * 0.55)
+            .allowsHitTesting(false)
     }
 
-    /// Roughly the colour the card's bottom fade ends on, so the strip reads as
-    /// the card carrying on rather than a second panel.
-    private var stripColor: some View {
-        ZStack {
-            Color(viewModel.palette.gradientMid)
-            Color.black.opacity(0.6)
-            Color(viewModel.palette.gradientStart).opacity(0.85)
-        }
+    /// The cover's colour pulled well toward black, so white text reads on it
+    /// whatever the sleeve. Tinting with the raw palette colour left a white
+    /// cover's fade (and the lyrics strip) near-white, and the text vanished.
+    private var shade: Color {
+        Color(viewModel.palette.gradientStart.blended(withFraction: 0.6, of: .black)
+              ?? .black)
     }
+
+    /// Exactly the colour the card's bottom fade ends on, so the strip reads as
+    /// the card carrying on rather than a second panel.
+    private var stripColor: some View { shade }
 
     private static let stripMove = Animation.easeInOut(duration: 0.28)
 
     @ViewBuilder
     private var lyricsStrip: some View {
         if expanded, showsLyrics, let snap {
-            FullscreenLyricsView(lines: lyrics, position: snap.position,
-                                 isPlaying: snap.isPlaying,
-                                 currentSize: 15, otherSize: 13,
-                                 spacing: 4, edgePadding: 40)
+            Group {
+                if lyrics.isEmpty {
+                    LyricsStatusView(loading: lyricsLoading)
+                } else {
+                    FullscreenLyricsView(lines: lyrics, playback: snap, fontSize: 14, spacing: 6)
+                }
+            }
+                .frame(maxWidth: .infinity)
                 .frame(height: 70)
                 .padding(.horizontal, 22)
                 .padding(.bottom, 14)
@@ -159,16 +154,18 @@ struct DesktopPlayerView: View {
             }
 
             HStack {
-                sideButton(icon: viewModel.lyricsEnabled ? "quote.bubble.fill" : "quote.bubble",
-                           active: viewModel.lyricsEnabled, action: viewModel.toggleLyrics)
+                sideButton(icon: viewModel.desktopLyricsEnabled ? "quote.bubble.fill" : "quote.bubble",
+                           active: viewModel.desktopLyricsEnabled, action: viewModel.toggleDesktopLyrics)
                     .disabled(!hasTrack)
                 Spacer()
                 transport
                 Spacer()
-                sideButton(icon: "arrow.up.left.and.arrow.down.right", active: false) {
-                    AppDelegate.shared?.menuBarController?.toggleDesktopFullscreen()
+                // Back to the glass bar — the card's way down, as the bar's cover
+                // is its way up.
+                sideButton(icon: "rectangle.compress.vertical", active: false) {
+                    SettingsStore.shared.merge(["miniplayer": ["desktop_style": "compact"]])
                 }
-                .disabled(!hasTrack)
+                .help(L10n.tr("ย่อเป็นแถบกระจก", "Shrink to glass bar"))
             }
             .padding(.top, 14)
         }

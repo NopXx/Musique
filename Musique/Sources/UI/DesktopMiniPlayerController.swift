@@ -5,7 +5,8 @@ import Combine
 /// The mini player as a free-standing panel on the desktop, apart from the
 /// menu bar popover, on the same view model. Driven entirely by
 /// `miniplayer.desktop_enabled` / `desktop_level` / `desktop_style` — the style
-/// picks the square `DesktopPlayerView` card or the popover's own `MiniPlayerView`.
+/// picks the square `DesktopPlayerView` card, the `DesktopCompactPlayerView` glass
+/// bar, or the popover's own `MiniPlayerView`.
 @MainActor
 final class DesktopMiniPlayerController {
     /// Borderless panels refuse key by default; the edit overlay's text fields need it.
@@ -89,32 +90,55 @@ final class DesktopMiniPlayerController {
         let root: AnyView
         let size: NSSize
         if raw == "classic" {
-            root = AnyView(MiniPlayerView(viewModel: viewModel)
+            root = AnyView(MiniPlayerView(viewModel: viewModel, onDesktop: true)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous)))
             size = NSSize(width: 320, height: 505)
+        } else if raw == "compact" {
+            size = NSSize(width: DesktopCompactPlayerView.width, height: DesktopCompactPlayerView.height)
+            root = AnyView(DesktopCompactPlayerView(
+                viewModel: viewModel,
+                onLyricsShown: lyricsResizer(panel, style: raw, base: size,
+                                             extra: DesktopCompactPlayerView.lyricsHeight)))
         } else {
-            root = AnyView(DesktopPlayerView(viewModel: viewModel) { [weak self, weak panel] on in
-                // Next turn of the run loop: this fires inside a SwiftUI update, and
-                // resizing the window there re-enters layout (AppKit logs it).
-                DispatchQueue.main.async {
-                    guard let self, let panel, self.style != "classic" else { return }
-                    let extra = on ? DesktopPlayerView.lyricsHeight : 0
-                    self.resize(panel, to: NSSize(width: DesktopPlayerView.size,
-                                                  height: DesktopPlayerView.size + extra))
-                }
-            })
             size = NSSize(width: DesktopPlayerView.size, height: DesktopPlayerView.size)
+            root = AnyView(DesktopPlayerView(
+                viewModel: viewModel,
+                onLyricsShown: lyricsResizer(panel, style: raw, base: size,
+                                             extra: DesktopPlayerView.lyricsHeight)))
         }
         // SwiftUI swallows background drags, so isMovableByWindowBackground alone
         // never fires; buttons and the seek bar still win over this.
-        let host = NSHostingController(rootView: root.gesture(WindowDragGesture()))
-        host.sizingOptions = []  // the controller owns the window size (lyrics strip grows it)
-        // Read the corner first: assigning a content view controller resizes the
-        // window to that view's (still empty) size, and a top edge read after it
-        // put the panel somewhere off screen.
+        // This controller owns the window size. A hosting view that *is* the
+        // window's content view pushes its min/max size onto the window on every
+        // update — `sizingOptions = []` didn't stop that — and with the lyrics
+        // column updating every frame and the strip growing and shrinking, AppKit
+        // threw on the constraint-pass loop. Inside a plain autoresizing container
+        // it's just a subview and leaves the window alone.
+        let host = NSHostingView(rootView: root.gesture(WindowDragGesture()))
+        host.sizingOptions = []
+        host.translatesAutoresizingMaskIntoConstraints = true
+        host.autoresizingMask = [.width, .height]
+        let container = NSView(frame: NSRect(origin: .zero, size: size))
+        host.frame = container.bounds
+        container.addSubview(host)
+        // Read the corner first, so the content swap can't move the top edge.
         let topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
-        panel.contentViewController = host
+        panel.contentView = container
         place(panel, topLeft: topLeft, size: size)
+    }
+
+    /// Grows the window by the lyrics strip and back, for the style that asked.
+    private func lyricsResizer(_ panel: NSPanel, style raw: String, base: NSSize,
+                               extra: CGFloat) -> (Bool) -> Void {
+        { [weak self, weak panel] on in
+            // Next turn of the run loop: this fires inside a SwiftUI update, and
+            // resizing the window there re-enters layout (AppKit logs it).
+            DispatchQueue.main.async {
+                guard let self, let panel, self.style == raw else { return }
+                self.resize(panel, to: NSSize(width: base.width,
+                                              height: base.height + (on ? extra : 0)))
+            }
+        }
     }
 
     /// Resizes keeping the top edge put, so the lyrics strip grows downward.

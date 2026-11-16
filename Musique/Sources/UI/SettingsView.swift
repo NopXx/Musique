@@ -1120,6 +1120,7 @@ private struct MiniplayerTab: View {
                 CardRow(label: LocalizedStringKey(L10n.miniplayerDesktopStyle)) {
                     Picker("", selection: $vm.miniplayerDesktopStyle) {
                         Text(L10n.miniplayerStyleCard).tag("card")
+                        Text(L10n.miniplayerStyleCompact).tag("compact")
                         Text(L10n.miniplayerStyleClassic).tag("classic")
                     }
                     .labelsHidden()
