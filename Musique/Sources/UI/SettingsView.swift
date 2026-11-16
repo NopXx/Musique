@@ -25,6 +25,9 @@ final class SettingsViewModel: ObservableObject {
     @Published var miniplayerAnimation: String
     @Published var miniplayerArtworkStyle: String
     @Published var animationFullscreen: Bool
+    @Published var miniplayerDesktopEnabled: Bool
+    @Published var miniplayerDesktopLevel: String
+    @Published var miniplayerDesktopStyle: String
 
     @Published var menubarStyle: String
     @Published var menubarShowIcon: Bool
@@ -95,6 +98,11 @@ final class SettingsViewModel: ObservableObject {
         let style = store.string(["miniplayer", "artwork_style"])
         self.miniplayerArtworkStyle = style.isEmpty ? "classic" : style
         self.animationFullscreen = store.bool(["miniplayer", "animation_fullscreen"])
+        self.miniplayerDesktopEnabled = store.bool(["miniplayer", "desktop_enabled"])
+        let level = store.string(["miniplayer", "desktop_level"])
+        self.miniplayerDesktopLevel = level.isEmpty ? "floating" : level
+        let dstyle = store.string(["miniplayer", "desktop_style"])
+        self.miniplayerDesktopStyle = dstyle.isEmpty ? "card" : dstyle
 
         let mbStyle = store.string(["menubar", "style"])
         self.menubarStyle = mbStyle.isEmpty ? "text" : mbStyle
@@ -330,6 +338,9 @@ final class SettingsViewModel: ObservableObject {
             "animation": miniplayerAnimation,
             "artwork_style": miniplayerArtworkStyle,
             "animation_fullscreen": animationFullscreen,
+            "desktop_enabled": miniplayerDesktopEnabled,
+            "desktop_level": miniplayerDesktopLevel,
+            "desktop_style": miniplayerDesktopStyle,
         ]])
     }
 
@@ -1093,6 +1104,41 @@ private struct MiniplayerTab: View {
                 SettingsToggleRow(label: LocalizedStringKey(L10n.miniplayerAnimFullscreen),
                                   isOn: $vm.animationFullscreen)
                     .onChange(of: vm.animationFullscreen) { _, _ in vm.saveMiniplayer() }
+            }
+
+            SettingsCard(
+                icon: "macwindow",
+                iconTint: .teal,
+                title: "Desktop"
+            ) {
+                SettingsToggleRow(label: LocalizedStringKey(L10n.miniplayerDesktopEnabled),
+                                  isOn: $vm.miniplayerDesktopEnabled)
+                    .onChange(of: vm.miniplayerDesktopEnabled) { _, _ in vm.saveMiniplayer() }
+
+                Divider().opacity(0.4)
+
+                CardRow(label: LocalizedStringKey(L10n.miniplayerDesktopStyle)) {
+                    Picker("", selection: $vm.miniplayerDesktopStyle) {
+                        Text(L10n.miniplayerStyleCard).tag("card")
+                        Text(L10n.miniplayerStyleClassic).tag("classic")
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    .onChange(of: vm.miniplayerDesktopStyle) { _, _ in vm.saveMiniplayer() }
+                }
+
+                Divider().opacity(0.4)
+
+                CardRow(label: LocalizedStringKey(L10n.miniplayerDesktopLevel)) {
+                    Picker("", selection: $vm.miniplayerDesktopLevel) {
+                        Text(L10n.miniplayerLevelFloating).tag("floating")
+                        Text(L10n.miniplayerLevelNormal).tag("normal")
+                        Text(L10n.miniplayerLevelDesktop).tag("desktop")
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    .onChange(of: vm.miniplayerDesktopLevel) { _, _ in vm.saveMiniplayer() }
+                }
             }
         }
     }

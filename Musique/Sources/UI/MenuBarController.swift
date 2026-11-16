@@ -16,6 +16,7 @@ final class MenuBarController {
     private let viewModel: MiniPlayerViewModel
     private let animationFullscreenController: AnimationFullscreenController
     private let desktopFullscreenController: DesktopFullscreenController
+    private let desktopMiniPlayerController: DesktopMiniPlayerController
     private var cancellables = Set<AnyCancellable>()
 
     private var dynamicIslandModel: MenuBarDynamicIslandModel?
@@ -31,6 +32,7 @@ final class MenuBarController {
         self.popover = NSPopover()
         self.animationFullscreenController = AnimationFullscreenController(viewModel: self.viewModel)
         self.desktopFullscreenController = DesktopFullscreenController(viewModel: self.viewModel)
+        self.desktopMiniPlayerController = DesktopMiniPlayerController(viewModel: self.viewModel)
         self.popover.behavior = .transient
         self.popover.contentSize = NSSize(width: 320, height: 505)
         self.popover.contentViewController = NSHostingController(rootView: MiniPlayerView(viewModel: viewModel))
@@ -140,6 +142,12 @@ final class MenuBarController {
     private func buildContextMenu() -> NSMenu {
         let menu = NSMenu()
 
+        let desktop = NSMenuItem(title: L10n.miniplayerDesktopEnabled,
+                                 action: #selector(toggleDesktopMiniPlayerAction), keyEquivalent: "")
+        desktop.target = self
+        desktop.state = desktopMiniPlayerController.isEnabled ? .on : .off
+        menu.addItem(desktop)
+
         let settings = NSMenuItem(title: L10n.tr("ตั้งค่า…", "Settings…"),
                                   action: #selector(openSettingsAction), keyEquivalent: ",")
         settings.target = self
@@ -232,6 +240,10 @@ final class MenuBarController {
                                           at: NSPoint(x: 0, y: button.bounds.height + 4),
                                           in: button)
         }
+    }
+
+    @objc private func toggleDesktopMiniPlayerAction() {
+        desktopMiniPlayerController.toggle()
     }
 
     @objc private func openSettingsAction() {
