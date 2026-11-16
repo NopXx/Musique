@@ -12,6 +12,39 @@ final class DebugServer {
     private var cachedRaw: [String: Any] = [:]
     private var cachedRawKey: String = ""
 
+    struct SongsResponse: Encodable {
+        let totalSongs: Int
+        let totalPlays: Int
+        let songs: [SongSummary]
+    }
+
+    struct SongDetailResponse: Encodable {
+        let summary: SongSummary?
+        let events: [HistoryEvent]
+        var artwork: ArtworkResult? = nil
+    }
+
+    struct LyricsResponse: Encodable {
+        let track: String
+        let artist: String
+        let lines: [LyricLine]
+        let hasSegments: Bool
+    }
+
+    nonisolated static func parseQueryParams(_ queryString: String) -> [String: String] {
+        var params: [String: String] = [:]
+        for pair in queryString.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            guard let keyRaw = kv.first.map(String.init) else { continue }
+            let key = keyRaw.removingPercentEncoding ?? keyRaw
+            let valRaw = kv.count > 1 ? String(kv[1]) : ""
+            let valNormalized = valRaw.replacingOccurrences(of: "+", with: " ")
+            let val = valNormalized.removingPercentEncoding ?? valNormalized
+            params[key] = val
+        }
+        return params
+    }
+
     func attach(monitor: PlayerMonitor) {
         self.playerMonitor = monitor
     }
@@ -99,9 +132,13 @@ final class DebugServer {
         let query = target.dropFirst(path.count).hasPrefix("?") ? String(target.dropFirst(path.count + 1)) : ""
         let forceRefresh = query.contains("refresh=1")
 
+        let params = Self.parseQueryParams(query)
+
         switch path {
         case "/", "/index.html":
             send(status: 200, contentType: "text/html; charset=utf-8", body: Self.indexHTML.data(using: .utf8) ?? Data(), conn: conn)
+        case "/songs", "/songs.html":
+            send(status: 200, contentType: "text/html; charset=utf-8", body: Self.songsHTML.data(using: .utf8) ?? Data(), conn: conn)
         case "/api/all":
             sendJSON(payload: collectAll(), conn: conn)
         case "/api/snapshot":
@@ -114,6 +151,74 @@ final class DebugServer {
                 let items = await HistoryStore.shared.loadPendingScrobbles(limit: 200)
                 let payload: [String: Any] = ["count": items.count, "items": items.map(Self.encodePending)]
                 self.sendJSON(payload: payload, conn: conn)
+            }
+        case "/api/history/songs":
+            let q = params["q"]
+            let sort = params["sort"] ?? "recent"
+            let limit = min(max(Int(params["limit"] ?? "100") ?? 100, 1), 500)
+            Task { @MainActor in
+                let stats = await HistoryStore.shared.totalStats()
+                let songs = await HistoryStore.shared.searchSongs(query: q, sort: sort, limit: limit)
+                let resp = SongsResponse(totalSongs: stats.songCount, totalPlays: stats.playCount, songs: songs)
+                self.sendEncodable(resp, conn: conn)
+            }
+        case "/api/history/detail":
+            guard let track = params["track"], !track.isEmpty,
+                  let artist = params["artist"], !artist.isEmpty else {
+                send(status: 400, body: Data("Missing track or artist parameter".utf8), conn: conn)
+                return
+            }
+            Task { @MainActor in
+                let events = await HistoryStore.shared.songEvents(track: track, artist: artist, limit: 100)
+                let matches = await HistoryStore.shared.searchSongs(query: track, limit: 10)
+                let summary = matches.first {
+                    $0.trackName.caseInsensitiveCompare(track) == .orderedSame &&
+                    $0.artistName.caseInsensitiveCompare(artist) == .orderedSame
+                }
+                let album = summary?.albumName ?? ""
+                let artwork = await ArtworkService.shared.lookup(title: track, artist: artist, album: album)
+                let resp = SongDetailResponse(summary: summary, events: events, artwork: artwork)
+                self.sendEncodable(resp, conn: conn)
+            }
+        case "/api/artwork":
+            guard let track = params["track"], !track.isEmpty,
+                  let artist = params["artist"], !artist.isEmpty else {
+                send(status: 400, body: Data("Missing track or artist parameter".utf8), conn: conn)
+                return
+            }
+            let album = params["album"] ?? ""
+            let shouldRedirect = params["redirect"] == "1"
+            Task { @MainActor in
+                let res = await ArtworkService.shared.lookup(title: track, artist: artist, album: album)
+                if shouldRedirect {
+                    if let target = res.artworkURL ?? res.artworkUltraURL, let dest = URL(string: target) {
+                        var head = "HTTP/1.1 302 Found\r\n"
+                        head += "Location: \(dest.absoluteString)\r\n"
+                        head += "Cache-Control: public, max-age=86400\r\n"
+                        head += "Access-Control-Allow-Origin: *\r\n"
+                        head += "Content-Length: 0\r\n\r\n"
+                        conn.send(content: Data(head.utf8), completion: .contentProcessed { _ in conn.cancel() })
+                    } else {
+                        self.send(status: 404, body: Data("artwork not found".utf8), conn: conn)
+                    }
+                } else {
+                    self.sendEncodable(res, conn: conn)
+                }
+            }
+        case "/api/lyrics":
+            guard let track = params["track"], !track.isEmpty,
+                  let artist = params["artist"], !artist.isEmpty else {
+                send(status: 400, body: Data("Missing track or artist parameter".utf8), conn: conn)
+                return
+            }
+            let album = params["album"] ?? ""
+            let duration = Double(params["duration"] ?? "0") ?? 0
+            let source: PlaybackSource = params["source"] == "spotify" ? .spotify : .appleMusic
+            Task { @MainActor in
+                let lines = await LyricsService.shared.lines(artist: artist, title: track, album: album, duration: duration, source: source)
+                let hasSegments = lines.contains { !$0.segments.isEmpty }
+                let resp = LyricsResponse(track: track, artist: artist, lines: lines, hasSegments: hasSegments)
+                self.sendEncodable(resp, conn: conn)
             }
         case "/api/settings":
             sendJSON(payload: SettingsStore.shared.publicSnapshot(), conn: conn)
@@ -263,6 +368,17 @@ final class DebugServer {
             body = Data("{}".utf8)
         }
         send(status: 200, contentType: "application/json; charset=utf-8", body: body, conn: conn)
+    }
+
+    private func sendEncodable<T: Encodable>(_ value: T, conn: NWConnection) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(value) {
+            send(status: 200, contentType: "application/json; charset=utf-8", body: data, conn: conn)
+        } else {
+            send(status: 500, body: Data("{}".utf8), conn: conn)
+        }
     }
 
     private static func sanitize(_ value: Any) -> Any {
@@ -513,4 +629,29 @@ requestAnimationFrame(frame);
 </body>
 </html>
 """#
+
+    nonisolated static var songsHTML: String {
+        let devPath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // Services
+            .deletingLastPathComponent() // Sources
+            .deletingLastPathComponent() // Musique
+            .deletingLastPathComponent() // MusicMate root
+            .appendingPathComponent("web/index.html")
+        if let content = try? String(contentsOf: devPath, encoding: .utf8), !content.isEmpty {
+            return content
+        }
+        let fallbackPath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // Services
+            .deletingLastPathComponent() // Sources
+            .deletingLastPathComponent() // Musique
+            .appendingPathComponent("web/index.html")
+        if let content = try? String(contentsOf: fallbackPath, encoding: .utf8), !content.isEmpty {
+            return content
+        }
+        if let bundleURL = Bundle.main.url(forResource: "index", withExtension: "html"),
+           let content = try? String(contentsOf: bundleURL, encoding: .utf8), !content.isEmpty {
+            return content
+        }
+        return "<!doctype html><html><head><title>Musique Songs</title></head><body><h1>Musique Songs Dashboard</h1><p>web/index.html not found</p></body></html>"
+    }
 }

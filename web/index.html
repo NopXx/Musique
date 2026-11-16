@@ -1,0 +1,1268 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Musique — Song History & Synced Lyrics</title>
+  <style>
+    :root {
+      --bg: #0a0b10;
+      --card-bg: #141724;
+      --card-bg-hover: #1c2032;
+      --surface-elevated: #1e2337;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-bright: rgba(255, 255, 255, 0.16);
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent: #fa2d48;
+      --accent-glow: rgba(250, 45, 72, 0.25);
+      --accent-gradient: linear-gradient(135deg, #fa2d48 0%, #ff5277 100%);
+      --green: #10b981;
+      --green-glow: rgba(16, 185, 129, 0.2);
+      --purple: #8b5cf6;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
+
+    /* Top Navigation */
+    header {
+      background: rgba(10, 11, 16, 0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo-badge {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--accent-gradient);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 14px var(--accent-glow);
+    }
+    .logo-badge svg { width: 20px; height: 20px; fill: #fff; }
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #fff;
+    }
+    .brand-sub {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .conn-status {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 6px 12px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      color: var(--text-secondary);
+    }
+    .conn-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green-glow);
+      animation: pulse 2s infinite ease-in-out;
+    }
+    .conn-dot.disconnected {
+      background: #ef4444;
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+      animation: none;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.2); opacity: 0.7; }
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      max-width: 1320px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px 28px 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Bento Stats Row */
+    .bento-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    .bento-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 18px 20px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .bento-card:hover {
+      border-color: var(--border-bright);
+      transform: translateY(-1px);
+    }
+    .bento-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .bento-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .bento-val {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #fff;
+    }
+    .bento-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Search & Filter Toolbar */
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+    }
+    .search-box {
+      flex: 1;
+      min-width: 260px;
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .search-icon {
+      position: absolute;
+      left: 14px;
+      width: 16px;
+      height: 16px;
+      fill: var(--text-muted);
+      pointer-events: none;
+    }
+    .search-input {
+      width: 100%;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 42px 10px 38px;
+      color: #fff;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .search-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .search-input::placeholder { color: var(--text-muted); }
+    .kbd-hint {
+      position: absolute;
+      right: 12px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 4px;
+      font-size: 11px;
+      padding: 2px 6px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      pointer-events: none;
+    }
+    .clear-btn {
+      position: absolute;
+      right: 10px;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: none;
+      font-size: 16px;
+      padding: 4px 8px;
+    }
+    .clear-btn:hover { color: #fff; }
+
+    .filter-pills {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .pill-btn {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .pill-btn:hover {
+      background: var(--card-bg-hover);
+      color: #fff;
+      border-color: var(--border-bright);
+    }
+    .pill-btn.active {
+      background: var(--accent-gradient);
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 2px 8px var(--accent-glow);
+    }
+
+    /* Content Area: Split View (List + Detail Drawer) */
+    .content-split {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 20px;
+      position: relative;
+    }
+    @media (min-width: 1080px) {
+      .content-split.has-detail {
+        grid-template-columns: 1fr 440px;
+      }
+    }
+
+    /* Song Table / List */
+    .songs-wrapper {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+    .songs-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+    .songs-table th {
+      background: rgba(0, 0, 0, 0.2);
+      padding: 12px 18px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .song-row {
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .song-row:last-child { border-bottom: none; }
+    .song-row:hover {
+      background: var(--card-bg-hover);
+    }
+    .song-row.active {
+      background: rgba(250, 45, 72, 0.1);
+      border-left: 3px solid var(--accent);
+    }
+    .song-cell {
+      padding: 14px 18px;
+      vertical-align: middle;
+    }
+    .track-meta-cell {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .art-thumb-wrapper {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+      background: var(--surface-elevated);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    }
+    .art-thumb-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 2;
+      transition: opacity 0.25s ease;
+    }
+    .art-thumb-fallback {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 15px;
+      color: rgba(255, 255, 255, 0.85);
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+      user-select: none;
+    }
+    .track-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 2px;
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .track-artist {
+      font-size: 13px;
+      color: var(--text-secondary);
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .album-cell {
+      font-size: 13px;
+      color: var(--text-muted);
+      max-width: 220px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .plays-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .plays-badge.hot {
+      background: var(--accent-glow);
+      border-color: rgba(250, 45, 72, 0.4);
+      color: #ff8093;
+    }
+    .time-cell {
+      font-size: 12px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* Detail Drawer Panel */
+    .detail-drawer {
+      display: none;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      flex-direction: column;
+      position: sticky;
+      top: 80px;
+      max-height: calc(100vh - 104px);
+    }
+    .content-split.has-detail .detail-drawer {
+      display: flex;
+    }
+    .drawer-header {
+      padding: 20px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
+      border-bottom: 1px solid var(--border);
+      position: relative;
+    }
+    .drawer-close {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.08);
+      border: none;
+      color: var(--text-secondary);
+      font-size: 18px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+      z-index: 10;
+    }
+    .drawer-close:hover {
+      background: rgba(255, 255, 255, 0.18);
+      color: #fff;
+    }
+    .hero-art-box {
+      width: 100%;
+      height: 220px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 16px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      background: var(--surface-elevated);
+    }
+    .hero-art-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 2;
+      transition: opacity 0.3s ease;
+    }
+    .hero-art-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 3;
+      display: none;
+    }
+    .hero-art-fallback {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+      color: rgba(255, 255, 255, 0.95);
+    }
+    .hero-art-fallback svg {
+      width: 56px;
+      height: 56px;
+      opacity: 0.85;
+      filter: drop-shadow(0 4px 12px rgba(0,0,0,0.5));
+    }
+    .hero-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1.3;
+      margin-bottom: 4px;
+    }
+    .hero-artist {
+      font-size: 14px;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .hero-album {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Drawer Tabs */
+    .drawer-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0,0,0,0.15);
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 12px 14px;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .tab-btn:hover { color: #fff; }
+    .tab-btn.active {
+      color: #fff;
+      border-bottom-color: var(--accent);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .tab-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Stat Cards in Drawer */
+    .stat-row-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .mini-stat {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+    }
+    .mini-stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+    }
+    .mini-stat-val {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      margin-top: 2px;
+    }
+
+    /* Timeline events */
+    .timeline-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-secondary);
+      margin-top: 8px;
+    }
+    .timeline-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      list-style: none;
+    }
+    .timeline-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .timeline-event-type {
+      text-transform: capitalize;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+    .timeline-time {
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    /* Lyrics Display */
+    .lyrics-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .lyrics-meta-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .lyrics-source-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .lyrics-lines-container {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 8px 0;
+    }
+    .lyric-line-box {
+      font-size: 15px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.55);
+      line-height: 1.4;
+      transition: all 0.2s;
+      cursor: default;
+      display: flex;
+      gap: 10px;
+    }
+    .lyric-time-tag {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 3px;
+      min-width: 44px;
+    }
+    .lyric-text {
+      flex: 1;
+    }
+    .lyric-line-box:hover {
+      color: #fff;
+    }
+    .lyric-line-box.active {
+      color: #fff;
+      font-weight: 700;
+      font-size: 16px;
+      text-shadow: 0 0 16px rgba(250, 45, 72, 0.4);
+    }
+
+    /* Empty & Loading States */
+    .state-box {
+      padding: 64px 24px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      color: var(--text-secondary);
+    }
+    .state-icon {
+      width: 48px;
+      height: 48px;
+      opacity: 0.4;
+      margin-bottom: 4px;
+    }
+    .state-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .state-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      max-width: 380px;
+    }
+
+    /* Loading Spinner */
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Utility */
+    .truncate {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo-group">
+      <div class="logo-badge">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-title">Musique Song Intelligence</div>
+        <div class="brand-sub">Listening Analytics & Synced Lyrics</div>
+      </div>
+    </div>
+    <div class="header-controls">
+      <div class="conn-status" id="connStatus">
+        <div class="conn-dot" id="connDot"></div>
+        <span id="connText">Connecting to 127.0.0.1:8765...</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Bento Stats -->
+    <div class="bento-grid">
+      <div class="bento-card">
+        <div class="bento-header">
+          <span>Unique Tracks</span>
+          <div class="bento-icon">🎵</div>
+        </div>
+        <div class="bento-val" id="statSongs">—</div>
+        <div class="bento-meta">Indexed across all sessions</div>
+      </div>
+      <div class="bento-card">
+        <div class="bento-header">
+          <span>Total Play Events</span>
+          <div class="bento-icon">▶️</div>
+        </div>
+        <div class="bento-val" id="statPlays">—</div>
+        <div class="bento-meta">Recorded playback triggers</div>
+      </div>
+      <div class="bento-card">
+        <div class="bento-header">
+          <span>Most Played Track</span>
+          <div class="bento-icon">🔥</div>
+        </div>
+        <div class="bento-val" style="font-size: 18px; margin-top: 4px;" id="statTopSong">—</div>
+        <div class="bento-meta" id="statTopArtist">Analyzing library...</div>
+      </div>
+      <div class="bento-card">
+        <div class="bento-header">
+          <span>Synced Lyrics Engine</span>
+          <div class="bento-icon">🎤</div>
+        </div>
+        <div class="bento-val" style="font-size: 18px; margin-top: 4px;">Apple Music TTML</div>
+        <div class="bento-meta">Fallback to LRCLIB database</div>
+      </div>
+    </div>
+
+    <!-- Search & Filters -->
+    <div class="toolbar">
+      <div class="search-box">
+        <svg class="search-icon" viewBox="0 0 24 24">
+          <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+        </svg>
+        <input type="text" id="searchInput" class="search-input" placeholder="Search by song title, artist, or album..." autocomplete="off">
+        <span class="kbd-hint" id="kbdHint">/</span>
+        <button class="clear-btn" id="clearBtn">&times;</button>
+      </div>
+      <div class="filter-pills">
+        <button class="pill-btn active" data-sort="recent">🕒 Recently Played</button>
+        <button class="pill-btn" data-sort="plays">🔥 Most Played</button>
+      </div>
+    </div>
+
+    <!-- Content Split View -->
+    <div class="content-split" id="contentSplit">
+      <!-- Songs Table -->
+      <div class="songs-wrapper">
+        <table class="songs-table">
+          <thead>
+            <tr>
+              <th style="width: 44%;">Track & Artist</th>
+              <th style="width: 28%;">Album</th>
+              <th style="width: 14%;">Plays</th>
+              <th style="width: 14%;">Last Heard</th>
+            </tr>
+          </thead>
+          <tbody id="songsTbody">
+            <tr>
+              <td colspan="4">
+                <div class="state-box">
+                  <div class="spinner"></div>
+                  <div class="state-title">Loading your music library...</div>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Detail & Lyrics Drawer -->
+      <div class="detail-drawer" id="detailDrawer">
+        <div class="drawer-header">
+          <button class="drawer-close" id="drawerClose">&times;</button>
+          <div class="hero-art-box" id="drawerHeroArt">
+            <video class="hero-art-video" id="heroArtVideo" autoplay loop muted playsinline></video>
+            <img class="hero-art-img" id="heroArtImg" style="opacity: 0;">
+            <div class="hero-art-fallback" id="heroArtFallback">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+              </svg>
+            </div>
+          </div>
+          <div class="hero-title" id="drawerTitle">—</div>
+          <div class="hero-artist" id="drawerArtist">—</div>
+          <div class="hero-album" id="drawerAlbum">—</div>
+        </div>
+
+        <div class="drawer-tabs">
+          <button class="tab-btn active" data-tab="lyrics">🎤 Synced Lyrics</button>
+          <button class="tab-btn" data-tab="history">📊 Play History</button>
+        </div>
+
+        <div class="tab-content" id="tabContent">
+          <!-- Lyrics Tab -->
+          <div class="lyrics-panel" id="lyricsPanel">
+            <div class="lyrics-meta-bar">
+              <span id="lyricsStatusText">Fetching lyrics...</span>
+              <span class="lyrics-source-badge" id="lyricsSourceBadge">TTML / LRC</span>
+            </div>
+            <div class="lyrics-lines-container" id="lyricsContainer">
+              <div class="state-box">
+                <div class="spinner"></div>
+                <div class="state-desc">Searching synced lyrics database...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- History Tab -->
+          <div class="history-panel" id="historyPanel" style="display: none;">
+            <div class="stat-row-grid">
+              <div class="mini-stat">
+                <div class="mini-stat-label">Total Plays</div>
+                <div class="mini-stat-val" id="drawerPlayCount">—</div>
+              </div>
+              <div class="mini-stat">
+                <div class="mini-stat-label">Duration</div>
+                <div class="mini-stat-val" id="drawerDuration">—</div>
+              </div>
+              <div class="mini-stat">
+                <div class="mini-stat-label">First Discovered</div>
+                <div class="mini-stat-val" id="drawerFirstPlayed" style="font-size: 13px;">—</div>
+              </div>
+              <div class="mini-stat">
+                <div class="mini-stat-label">Last Played</div>
+                <div class="mini-stat-val" id="drawerLastPlayed" style="font-size: 13px;">—</div>
+              </div>
+            </div>
+
+            <div class="timeline-title">Playback History Timeline</div>
+            <ul class="timeline-list" id="timelineList">
+              <!-- Rendered items -->
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // Configuration & State
+    const API_BASE = window.location.origin.startsWith("http") ? window.location.origin : "http://127.0.0.1:8765";
+    let songsData = [];
+    let activeSong = null;
+    let currentSort = "recent";
+    let searchQuery = "";
+    let debounceTimer = null;
+
+    const $ = id => document.getElementById(id);
+
+    // Procedural vibrant gradient from string hash
+    function getGradient(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+      }
+      const h1 = Math.abs(hash % 360);
+      const h2 = (h1 + 45 + (Math.abs(hash >> 3) % 40)) % 360;
+      return `linear-gradient(135deg, hsl(${h1}, 75%, 45%) 0%, hsl(${h2}, 85%, 35%) 100%)`;
+    }
+
+    function formatDuration(seconds) {
+      if (!seconds || isNaN(seconds) || seconds <= 0) return "--:--";
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return `${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+
+    function formatRelativeTime(dateStr) {
+      if (!dateStr) return "—";
+      const date = new Date(dateStr);
+      const diffSec = Math.floor((Date.now() - date.getTime()) / 1000);
+      if (diffSec < 60) return "Just now";
+      if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+      if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+      if (diffSec < 604800) return `${Math.floor(diffSec / 86400)}d ago`;
+      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+
+    // API Calls
+    async function fetchSongs() {
+      try {
+        const q = encodeURIComponent(searchQuery.trim());
+        const url = `${API_BASE}/api/history/songs?q=${q}&sort=${currentSort}&limit=200`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        
+        // Update connection status
+        $("connDot").className = "conn-dot";
+        $("connText").textContent = `Connected to Musique`;
+
+        // Update Bento stats
+        $("statSongs").textContent = (data.totalSongs || data.songs.length).toLocaleString();
+        $("statPlays").textContent = (data.totalPlays || 0).toLocaleString();
+        
+        songsData = data.songs || [];
+        if (songsData.length > 0 && currentSort === "plays") {
+          $("statTopSong").textContent = songsData[0].trackName;
+          $("statTopArtist").textContent = `${songsData[0].artistName} (${songsData[0].playCount} plays)`;
+        } else if (songsData.length > 0 && !$("statTopSong").textContent.includes("plays")) {
+          const top = [...songsData].sort((a,b) => b.playCount - a.playCount)[0];
+          if (top) {
+            $("statTopSong").textContent = top.trackName;
+            $("statTopArtist").textContent = `${top.artistName} (${top.playCount} plays)`;
+          }
+        }
+
+        renderSongsList();
+      } catch (err) {
+        console.error("fetchSongs error:", err);
+        $("connDot").className = "conn-dot disconnected";
+        $("connText").textContent = `Offline (Make sure Musique is running)`;
+        $("songsTbody").innerHTML = `
+          <tr>
+            <td colspan="4">
+              <div class="state-box">
+                <div class="state-title">Unable to connect to Musique</div>
+                <div class="state-desc">Check that Musique is running on your Mac with its DebugServer enabled (port 8765).</div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
+    }
+
+    function renderSongsList() {
+      const tbody = $("songsTbody");
+      if (songsData.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="4">
+              <div class="state-box">
+                <div class="state-title">No songs found</div>
+                <div class="state-desc">Try searching with a different track title, artist name, or album.</div>
+              </div>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = songsData.map((song, idx) => {
+        const bg = getGradient(song.artistName + song.trackName);
+        const initial = (song.trackName || "?").charAt(0).toUpperCase();
+        const isActive = activeSong && activeSong.id === song.id;
+        const isHot = song.playCount >= 5;
+        const artUrl = `${API_BASE}/api/artwork?track=${encodeURIComponent(song.trackName)}&artist=${encodeURIComponent(song.artistName)}&album=${encodeURIComponent(song.albumName || '')}&redirect=1`;
+        return `
+          <tr class="song-row ${isActive ? 'active' : ''}" data-idx="${idx}">
+            <td class="song-cell">
+              <div class="track-meta-cell">
+                <div class="art-thumb-wrapper">
+                  <img class="art-thumb-img" src="${artUrl}" loading="lazy" onload="this.style.opacity='1'" onerror="this.style.opacity='0'" style="opacity: 0;">
+                  <div class="art-thumb-fallback" style="background: ${bg};">${initial}</div>
+                </div>
+                <div>
+                  <div class="track-title" title="${escapeHtml(song.trackName)}">${escapeHtml(song.trackName)}</div>
+                  <div class="track-artist" title="${escapeHtml(song.artistName)}">${escapeHtml(song.artistName)}</div>
+                </div>
+              </div>
+            </td>
+            <td class="song-cell album-cell" title="${escapeHtml(song.albumName || '—')}">
+              ${escapeHtml(song.albumName || '—')}
+            </td>
+            <td class="song-cell">
+              <span class="plays-badge ${isHot ? 'hot' : ''}">
+                ${isHot ? '🔥' : '▶'} ${song.playCount}
+              </span>
+            </td>
+            <td class="song-cell time-cell">
+              ${formatRelativeTime(song.lastPlayed)}
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      // Attach row click events
+      document.querySelectorAll(".song-row").forEach(row => {
+        row.addEventListener("click", () => {
+          const idx = parseInt(row.getAttribute("data-idx"), 10);
+          selectSong(songsData[idx]);
+        });
+      });
+    }
+
+    async function selectSong(song) {
+      activeSong = song;
+      renderSongsList(); // update active highlight
+      $("contentSplit").classList.add("has-detail");
+
+      // Reset Hero Art
+      $("heroArtVideo").style.display = "none";
+      $("heroArtVideo").src = "";
+      $("heroArtImg").style.opacity = "0";
+      $("heroArtFallback").style.background = getGradient(song.artistName + song.trackName);
+      
+      // Try immediate artwork redirect for smooth instant cover
+      const directArt = `${API_BASE}/api/artwork?track=${encodeURIComponent(song.trackName)}&artist=${encodeURIComponent(song.artistName)}&album=${encodeURIComponent(song.albumName || '')}&redirect=1`;
+      $("heroArtImg").src = directArt;
+      $("heroArtImg").onload = () => { $("heroArtImg").style.opacity = "1"; };
+
+      $("drawerTitle").textContent = song.trackName;
+      $("drawerArtist").textContent = song.artistName;
+      $("drawerAlbum").textContent = song.albumName ? `Album: ${song.albumName}` : "";
+      
+      // Update History Details
+      $("drawerPlayCount").textContent = `${song.playCount} plays`;
+      $("drawerDuration").textContent = formatDuration(song.duration);
+      $("drawerFirstPlayed").textContent = song.firstPlayed ? new Date(song.firstPlayed).toLocaleDateString() : "—";
+      $("drawerLastPlayed").textContent = song.lastPlayed ? new Date(song.lastPlayed).toLocaleString() : "—";
+
+      // Fetch Detail & Timeline & high-res artwork / animation
+      loadSongDetails(song);
+      // Fetch Lyrics
+      loadLyrics(song);
+    }
+
+    async function loadSongDetails(song) {
+      const timelineList = $("timelineList");
+      timelineList.innerHTML = `<li class="timeline-item"><span class="timeline-event-type">Loading history...</span></li>`;
+      try {
+        const url = `${API_BASE}/api/history/detail?track=${encodeURIComponent(song.trackName)}&artist=${encodeURIComponent(song.artistName)}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        
+        // Artwork handling
+        if (data.artwork) {
+          if (data.artwork.animationURL) {
+            $("heroArtVideo").src = data.artwork.animationURL;
+            $("heroArtVideo").style.display = "block";
+          } else if (data.artwork.artworkUltraURL || data.artwork.artworkURL) {
+            const highRes = data.artwork.artworkUltraURL || data.artwork.artworkURL;
+            $("heroArtImg").src = highRes;
+            $("heroArtImg").onload = () => { $("heroArtImg").style.opacity = "1"; };
+          }
+        }
+
+        const events = data.events || [];
+        if (events.length === 0) {
+          timelineList.innerHTML = `<li class="timeline-item"><span class="timeline-time">No events recorded.</span></li>`;
+          return;
+        }
+        timelineList.innerHTML = events.map(ev => `
+          <li class="timeline-item">
+            <span class="timeline-event-type">Played track</span>
+            <span class="timeline-time">${new Date(ev.timestamp).toLocaleString()}</span>
+          </li>
+        `).join("");
+      } catch (err) {
+        timelineList.innerHTML = `<li class="timeline-item"><span class="timeline-time">Error loading timeline</span></li>`;
+      }
+    }
+
+    async function loadLyrics(song) {
+      const container = $("lyricsContainer");
+      $("lyricsStatusText").textContent = "Fetching synced lyrics...";
+      container.innerHTML = `
+        <div class="state-box">
+          <div class="spinner"></div>
+          <div class="state-desc">Searching Apple Music TTML & LRCLIB...</div>
+        </div>
+      `;
+      try {
+        const params = new URLSearchParams({
+          track: song.trackName,
+          artist: song.artistName,
+          album: song.albumName || "",
+          duration: Math.round(song.duration || 0)
+        });
+        const res = await fetch(`${API_BASE}/api/lyrics?${params}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const lines = data.lines || [];
+
+        if (lines.length === 0) {
+          $("lyricsStatusText").textContent = "No synced lyrics available";
+          container.innerHTML = `
+            <div class="state-box">
+              <div class="state-title">Lyrics not found</div>
+              <div class="state-desc">No synchronized syllable or line lyrics found for "${escapeHtml(song.trackName)}".</div>
+            </div>
+          `;
+          return;
+        }
+
+        $("lyricsStatusText").textContent = `${lines.length} lines synced`;
+        $("lyricsSourceBadge").textContent = data.hasSegments ? "Apple TTML Syllables" : "Line Synced";
+
+        container.innerHTML = lines.map((l, i) => `
+          <div class="lyric-line-box" id="line-${i}">
+            <span class="lyric-time-tag">${formatDuration(l.time)}</span>
+            <span class="lyric-text">${escapeHtml(l.text || "♪")}</span>
+          </div>
+        `).join("");
+      } catch (err) {
+        $("lyricsStatusText").textContent = "Error fetching lyrics";
+        container.innerHTML = `
+          <div class="state-box">
+            <div class="state-title">Lyrics lookup failed</div>
+            <div class="state-desc">${escapeHtml(err.message)}</div>
+          </div>
+        `;
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    // Event Listeners
+    $("searchInput").addEventListener("input", e => {
+      searchQuery = e.target.value;
+      $("clearBtn").style.display = searchQuery ? "block" : "none";
+      $("kbdHint").style.display = searchQuery ? "none" : "block";
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(fetchSongs, 250);
+    });
+
+    $("clearBtn").addEventListener("click", () => {
+      $("searchInput").value = "";
+      searchQuery = "";
+      $("clearBtn").style.display = "none";
+      $("kbdHint").style.display = "block";
+      fetchSongs();
+    });
+
+    document.querySelectorAll(".pill-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".pill-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentSort = btn.getAttribute("data-sort");
+        fetchSongs();
+      });
+    });
+
+    // Drawer Tabs Switch
+    document.querySelectorAll(".tab-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        const tab = btn.getAttribute("data-tab");
+        if (tab === "lyrics") {
+          $("lyricsPanel").style.display = "flex";
+          $("historyPanel").style.display = "none";
+        } else {
+          $("lyricsPanel").style.display = "none";
+          $("historyPanel").style.display = "flex";
+        }
+      });
+    });
+
+    $("drawerClose").addEventListener("click", () => {
+      $("contentSplit").classList.remove("has-detail");
+      activeSong = null;
+      renderSongsList();
+    });
+
+    // Keyboard Shortcuts
+    window.addEventListener("keydown", e => {
+      if (e.key === "/" && document.activeElement !== $("searchInput")) {
+        e.preventDefault();
+        $("searchInput").focus();
+        $("searchInput").select();
+      }
+      if (e.key === "Escape") {
+        if (document.activeElement === $("searchInput")) {
+          $("searchInput").blur();
+        } else {
+          $("contentSplit").classList.remove("has-detail");
+          activeSong = null;
+          renderSongsList();
+        }
+      }
+    });
+
+    // Initial Load
+    fetchSongs();
+    // Auto-refresh songs every 15 seconds
+    setInterval(() => {
+      if (!document.hidden && !searchQuery) {
+        fetchSongs();
+      }
+    }, 15000);
+  </script>
+</body>
+</html>
