@@ -36,3 +36,7 @@ Secrets.xcconfig
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Agent instructions and skills stay local
+CLAUDE.md
+.claude/skills/
