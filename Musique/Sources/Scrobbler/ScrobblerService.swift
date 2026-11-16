@@ -81,6 +81,9 @@ final class ScrobblerService: ObservableObject {
             return settings.value(["scrobble", "scrobble_apple_music"], Bool.self) ?? true
         case .spotify:
             return settings.value(["scrobble", "scrobble_spotify"], Bool.self) ?? true
+        case .webScrobbler:
+            // The extension already scrobbles these itself; doing it here too doubles them.
+            return settings.value(["scrobble", "scrobble_web_scrobbler"], Bool.self) ?? false
         }
     }
 

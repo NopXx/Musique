@@ -49,8 +49,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationService.shared.attach(monitor: playerMonitor, scrobbler: scrobbler)
         WebhookDispatcher.shared.attach(monitor: playerMonitor, scrobbler: scrobbler)
         HistoryRecorder.shared.attach(monitor: playerMonitor, scrobbler: scrobbler)
+        LyricsPrefetcher.shared.attach(monitor: playerMonitor)
         PendingScrobbleQueue.shared.start()
         DebugServer.shared.attach(monitor: playerMonitor)
+        WebScrobblerReceiver.shared.attach(monitor: playerMonitor)
         if SettingsStore.shared.bool(["debug", "server_enabled"]) {
             let port = UInt16(SettingsStore.shared.int(["debug", "server_port"]))
             DebugServer.shared.start(port: port == 0 ? 8765 : port)

@@ -25,9 +25,9 @@ final class PlayerMonitor: ObservableObject {
     private var musicObserverToken: NSObjectProtocol?
     private var spotifyObserverToken: NSObjectProtocol?
 
-    /// The source that most recently reported a "playing" state. Used to break ties
-    /// when both players are active, falling back to the configured priority.
-    private var lastActiveSource: PlaybackSource = .appleMusic
+    /// The source that most recently started playing. Breaks ties when several
+    /// play at once; the configured priority decides when it isn't among them.
+    private var lastActiveSource: PlaybackSource?
 
     init() {
         if let raw = SBApplication(bundleIdentifier: musicBundleID) {
@@ -75,12 +75,20 @@ final class PlayerMonitor: ObservableObject {
 
     func refresh() {
         let settings = SettingsStore.shared
-        let musicSnap = settings.bool(["sources", "apple_music_enabled"]) ? appleMusicSnapshot() : nil
-        let spotifySnap = settings.bool(["sources", "spotify_enabled"]) ? spotifySnapshot() : nil
-
         var snaps: [PlaybackSource: NowPlayingSnapshot] = [:]
-        snaps[.appleMusic] = musicSnap
-        snaps[.spotify] = spotifySnap
+        for source in PlaybackSource.allCases where settings.bool(["sources", source.enabledKey]) {
+            switch source {
+            case .appleMusic:   snaps[source] = appleMusicSnapshot()
+            case .spotify:      snaps[source] = spotifySnapshot()
+            case .webScrobbler: snaps[source] = WebScrobblerReceiver.shared.snapshot
+            }
+        }
+
+        // Remember which source started playing last, to break ties later.
+        // Several starting in the same refresh (e.g. at launch) say nothing; priority decides.
+        let started = snaps.filter { $0.value.isPlaying && sourceSnapshots[$0.key]?.isPlaying != true }.map(\.key)
+        if started.count == 1 { lastActiveSource = started[0] }
+        else if started.count > 1 { lastActiveSource = nil }
         sourceSnapshots = snaps
 
         // A manual selection is only valid while that source still has a track.
@@ -88,11 +96,7 @@ final class PlayerMonitor: ObservableObject {
             selectedSource = nil
         }
 
-        // Track which source is actively playing so we can break ties later.
-        if musicSnap?.isPlaying == true { lastActiveSource = .appleMusic }
-        else if spotifySnap?.isPlaying == true { lastActiveSource = .spotify }
-
-        let chosen = pickSnapshot(music: musicSnap, spotify: spotifySnap)
+        let chosen = pickSnapshot(snaps)
 
         guard let snap = chosen else {
             MusicAppController.activeSource = .appleMusic
@@ -106,31 +110,18 @@ final class PlayerMonitor: ObservableObject {
         snapshot = snap
     }
 
-    /// Choose between two candidate snapshots. A playing source always wins over a
-    /// paused one; ties are broken by the configured priority, then last-active.
-    private func pickSnapshot(music: NowPlayingSnapshot?, spotify: NowPlayingSnapshot?) -> NowPlayingSnapshot? {
+    /// Choose among the candidate snapshots. A playing source always wins over a
+    /// paused one; ties go to the one that started playing last, then priority.
+    private func pickSnapshot(_ snaps: [PlaybackSource: NowPlayingSnapshot]) -> NowPlayingSnapshot? {
         // An explicit user selection wins while its source still has a track.
-        if let sel = selectedSource {
-            switch sel {
-            case .appleMusic where music != nil: return music
-            case .spotify where spotify != nil:  return spotify
-            default: break
-            }
-        }
-        switch (music, spotify) {
-        case (nil, nil):           return nil
-        case (let m?, nil):        return m
-        case (nil, let s?):        return s
-        case (let m?, let s?):
-            if m.isPlaying != s.isPlaying {
-                return m.isPlaying ? m : s
-            }
-            // Both playing or both paused: prefer the last one that started playing,
-            // otherwise fall back to the configured priority.
-            let priority = PlaybackSource(rawValue: SettingsStore.shared.string(["sources", "priority"])) ?? .appleMusic
-            let preferred = (lastActiveSource == .spotify) ? PlaybackSource.spotify : priority
-            return preferred == .spotify ? s : m
-        }
+        if let sel = selectedSource, let snap = snaps[sel] { return snap }
+        let playing = snaps.values.filter(\.isPlaying)
+        let pool = playing.isEmpty ? Array(snaps.values) : playing
+        if pool.count <= 1 { return pool.first }
+        if let last = lastActiveSource, let snap = pool.first(where: { $0.source == last }) { return snap }
+        let priority = PlaybackSource(rawValue: SettingsStore.shared.string(["sources", "priority"])) ?? .appleMusic
+        return pool.first { $0.source == priority }
+            ?? PlaybackSource.allCases.lazy.compactMap { src in pool.first { $0.source == src } }.first
     }
 
     private func appleMusicSnapshot() -> NowPlayingSnapshot? {
@@ -189,6 +180,11 @@ final class PlayerMonitor: ObservableObject {
     }
 
     private func tick() {
+        // The web source has no "stopped" event; it expires on a clock instead.
+        if sourceSnapshots[.webScrobbler] != nil && WebScrobblerReceiver.shared.snapshot == nil {
+            refresh()
+            return
+        }
         guard var snap = snapshot, snap.isPlaying else { return }
         let elapsed = Date().timeIntervalSince(basePositionAt)
         let newPos = basePosition + elapsed

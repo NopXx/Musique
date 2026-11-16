@@ -278,6 +278,9 @@ struct NowPlayingCard: View {
                              action: MusicAppController.next)
             }
             .padding(.top, 2)
+            // Web playback is one-way from the browser extension.
+            .disabled(!snap.source.isControllable)
+            .opacity(snap.source.isControllable ? 1 : 0.35)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
