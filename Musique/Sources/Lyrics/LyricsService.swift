@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import MusicKit
 import MusanovaKit
+import SQLite3
 
 struct TimedLyricSegment: Equatable, Encodable {
     let text: String
@@ -145,7 +146,7 @@ enum TTMLCacheKey {
             }
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         // FNV-1a is deliberately simple and stable across launches. Swift's
-        // `hashValue` is randomized and would orphan every cached file on relaunch.
+        // `hashValue` is randomized and would make cached filenames undiscoverable.
         let hash = identity.utf8.reduce(UInt64(14_695_981_039_346_656_037)) {
             ($0 ^ UInt64($1)) &* 1_099_511_628_211
         }
@@ -153,8 +154,6 @@ enum TTMLCacheKey {
     }
 }
 
-/// Raw TTML as Apple returned it, one file per track, so each song costs one
-/// trip to the private endpoint per machine.
 private actor TTMLDiskCache {
     static let shared = TTMLDiskCache()
 
@@ -226,11 +225,30 @@ actor LyricsService {
             ? await AppleMusicLyricsClient.shared.lines(artist: artist, title: title,
                                                         album: album, duration: duration)
             : []
-        let lines = appleLines.isEmpty
-            ? await fetch(artist: artist, title: title, album: album, duration: duration)
-            : appleLines
-        NSLog("[Lyrics] Lookup finished: source=%@ lines=%ld", source.rawValue, lines.count)
+        // LRCLIB only when Apple's copy can't light words up: many K-pop TTMLs are
+        // `itunes:timing="Line"`, and LRCLIB's lyricsfile sometimes has every word.
+        let lines = Self.isWordTimed(appleLines)
+            ? appleLines
+            : Self.preferred(apple: appleLines,
+                             lrclib: await fetch(artist: artist, title: title,
+                                                 album: album, duration: duration))
+        NSLog("[Lyrics] Lookup finished: source=%@ lines=%ld words=%@", source.rawValue,
+              lines.count, Self.isWordTimed(lines) ? "yes" : "no")
         return lines
+    }
+
+    /// Timed below the line. A line-timed TTML still parses to one segment per
+    /// line (the whole line), so it takes more than one somewhere to count.
+    static func isWordTimed(_ lines: [LyricLine]) -> Bool {
+        lines.contains { $0.segments.count > 1 }
+    }
+
+    /// Word timing beats line timing whichever side has it; between two
+    /// line-timed copies Apple's wins, being the release that's playing.
+    static func preferred(apple: [LyricLine], lrclib: [LyricLine]) -> [LyricLine] {
+        if isWordTimed(apple) { return apple }
+        if isWordTimed(lrclib) { return lrclib }
+        return apple.isEmpty ? lrclib : apple
     }
 
     private func fetch(artist: String, title: String,
@@ -258,13 +276,16 @@ actor LyricsService {
         // Closest duration among the entries that actually carry timings — the
         // candidates are different masters and edits of the same song, and length is
         // the only thing that tells them apart.
+        // Word timing is worth a few seconds of length: same-length entries are
+        // often one master uploaded twice, one with `words:` and one without.
+        func score(_ e: [String: Any]) -> Double {
+            let off = abs((e["duration"] as? Double ?? 0) - duration)
+            let words = (e["lyricsfile"] as? String)?.contains("words:") == true
+            return off + (words ? 0 : 3)
+        }
         let best = results
             .filter { $0["lyricsfile"] is String || $0["syncedLyrics"] is String }
-            .min { a, b in
-                let da = abs((a["duration"] as? Double ?? 0) - duration)
-                let db = abs((b["duration"] as? Double ?? 0) - duration)
-                return da < db
-            }
+            .min { score($0) < score($1) }
         return best.map(parse) ?? []
     }
 
@@ -348,19 +369,103 @@ private actor AppleMusicLyricsClient {
         }
 
         do {
-            let request = try MusicLyricsRequest(songID: MusicItemID(songID),
-                                                 developerToken: developerToken)
-            let response = try await request.response(countryCode: "th")
-            guard let ttml = response.rawTTML else { return [] }
+            let ttml: String
+            var syllable = MusicAppLyricsCache.ttml(songID: songID)
+            if syllable != nil {
+                NSLog("[Lyrics] TTML from the Music app's cache: song=%@", songID)
+            } else {
+                do {
+                    syllable = try await syllableTTML(songID: songID, token: developerToken)
+                } catch {
+                    NSLog("[Lyrics] Apple Music syllable request failed: %@", String(describing: error))
+                }
+            }
+            if let raw = syllable {
+                ttml = raw
+            } else {
+                NSLog("[Lyrics] Apple Music syllable lyrics missing, trying line lyrics: song=%@",
+                      songID)
+                guard let raw = try await lineTTML(songID: songID, token: developerToken)
+                else { return [] }
+                ttml = raw
+            }
             let parsed = parsedLines(from: ttml)
             await TTMLDiskCache.shared.save(ttml, fileName: cacheFile)
             NSLog("[Lyrics] Apple Music TTML fetched: song=%@ lines=%ld bytes=%ld",
                   songID, parsed.count, ttml.utf8.count)
             return parsed
         } catch {
-            NSLog("[Lyrics] Apple Music syllable lyrics failed: %@", error.localizedDescription)
+            NSLog("[Lyrics] Apple Music lyrics failed: %@", error.localizedDescription)
             return []
         }
+    }
+
+    /// Word-timed TTML: the Music app's include-with-localizations form (TTML
+    /// under `ttmlLocalizations`), then the bare resource. Some tracks (lots of
+    /// K-pop) 404 on every form for the web token — `MusicAppLyricsCache` is
+    /// the only way to those.
+    private func syllableTTML(songID: String, token: String) async throws -> String? {
+        let base = "https://amp-api.music.apple.com/v1/catalog/th/songs"
+        let locale: [URLQueryItem] = [
+            URLQueryItem(name: "l[lyrics]", value: "en-TH,th-TH"),
+            URLQueryItem(name: "l[script]", value: "en-Latn,th-Thai"),
+        ]
+        // Tried in order; each logs what came back, since which one a given
+        // track answers on isn't knowable ahead of time.
+        let attempts: [(String, [URLQueryItem])] = [
+            (base, [URLQueryItem(name: "filter[equivalents]", value: songID)] + locale + [
+                URLQueryItem(name: "extend[syllable-lyrics]", value: "ttmlLocalizations"),
+                URLQueryItem(name: "include", value: "syllable-lyrics"),
+            ]),
+            ("\(base)/\(songID)/syllable-lyrics",
+             locale + [URLQueryItem(name: "extend", value: "ttmlLocalizations")]),
+        ]
+        var lastError: Error?
+        for (path, query) in attempts {
+            var components = URLComponents(string: path)
+            components?.queryItems = query
+            guard let url = components?.url else { continue }
+            do {
+                let response = try await MusicPrivilegedDataRequest(url: url, developerToken: token).response()
+                let root = try JSONSerialization.jsonObject(with: response.data)
+                if let ttml = Self.firstTTML(in: root) {
+                    NSLog("[Lyrics] Apple Music syllable hit: %@", url.absoluteString)
+                    return ttml
+                }
+                let body = String(decoding: response.data, as: UTF8.self)
+                let tail = body.range(of: "\"relationships\"").map { String(body[$0.lowerBound...].prefix(400)) }
+                    ?? "no relationships"
+                NSLog("[Lyrics] Apple Music syllable empty: %@ → %@", url.absoluteString, tail)
+            } catch {
+                NSLog("[Lyrics] Apple Music syllable failed: %@ → %@", url.absoluteString,
+                      String(describing: error))
+                lastError = error
+            }
+        }
+        if let lastError { throw lastError }
+        return nil
+    }
+
+    /// The TTML string wherever the response nests it (`attributes.ttml` on the
+    /// bare resource, `ttmlLocalizations` on an included one).
+    static func firstTTML(in node: Any) -> String? {
+        if let dict = node as? [String: Any] {
+            for key in ["ttmlLocalizations", "ttml"] {
+                if let s = dict[key] as? String, s.contains("<tt") { return s }
+            }
+            for value in dict.values { if let s = firstTTML(in: value) { return s } }
+        } else if let array = node as? [Any] {
+            for value in array { if let s = firstTTML(in: value) { return s } }
+        }
+        return nil
+    }
+
+    /// The plain `lyrics` resource: same TTML shape, `itunes:timing="Line"`.
+    private func lineTTML(songID: String, token: String) async throws -> String? {
+        guard let url = URL(string: "https://amp-api.music.apple.com/v1/catalog/th/songs/\(songID)/lyrics")
+        else { return nil }
+        let response = try await MusicPrivilegedDataRequest(url: url, developerToken: token).response()
+        return try JSONDecoder().decode(MusicLyricsResponse.self, from: response.data).rawTTML
     }
 
     private func parsedLines(from ttml: String) -> [LyricLine] {
@@ -566,16 +671,38 @@ enum LRC {
 /// field ever grows nested values or block scalars per line this gives up and the
 /// caller falls back to LRC, which is the same outcome as an unparseable file.
 enum LyricsFile {
+    /// Each entry under `lines:` is a line; its `words:` list nests one level
+    /// deeper and carries a start per word. Only an unindented `- ` opens a line —
+    /// counting the nested word items as lines too split every song into one word
+    /// per line. The words become segments, so LRCLIB lines light up word by word.
     static func parse(_ yaml: String) -> [LyricLine] {
         var out: [LyricLine] = []
         var inLines = false
         var text: String?
         var start: Double?
         var end: Double?
+        var words: [(text: String, start: Double, end: Double?)] = []
+        var wordText: String?
+        var wordStart: Double?
+        var wordEnd: Double?
 
+        func flushWord() {
+            if let wordText, let wordStart { words.append((wordText, wordStart, wordEnd)) }
+            wordText = nil; wordStart = nil; wordEnd = nil
+        }
         func flush() {
-            if let text, let start { out.append(LyricLine(time: start, end: end, text: text)) }
-            text = nil; start = nil; end = nil
+            flushWord()
+            if let text, let start {
+                let segments = words.enumerated().map { i, w in
+                    // A word runs until the next one starts, the last until the line ends.
+                    let stop = w.end ?? (i + 1 < words.count ? words[i + 1].start : nil)
+                        ?? end ?? w.start + 0.3
+                    return TimedLyricSegment(text: w.text.trimmingCharacters(in: .whitespaces),
+                                             start: w.start, end: max(stop, w.start))
+                }
+                out.append(LyricLine(time: start, end: end, text: text, segments: segments))
+            }
+            text = nil; start = nil; end = nil; words = []
         }
 
         for raw in yaml.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -588,17 +715,28 @@ enum LyricsFile {
             // Any other top-level key (`plain:`) ends the list. Its own body is
             // indented, so only an unindented, undashed line can be one.
             if !line.hasPrefix(" ") && !line.hasPrefix("-") { break }
-            if trimmed.hasPrefix("- ") { flush() }
 
-            let body = trimmed.hasPrefix("- ") ? String(trimmed.dropFirst(2)) : trimmed
+            let indent = line.prefix { $0 == " " }.count
+            let dashed = trimmed.hasPrefix("- ")
+            if dashed && indent == 0 { flush() }
+            // Line fields sit at indent 2 (or on the line's own dash); a word's dash
+            // is at 2 and its other fields at 4.
+            let isWord = (dashed && indent >= 2) || indent >= 4
+            if dashed && isWord { flushWord() }
+
+            let body = dashed ? String(trimmed.dropFirst(2)) : trimmed
             guard let colon = body.firstIndex(of: ":") else { continue }
             // The first colon is always the key's: a bare YAML scalar can't contain
             // ": ", so anything that does comes back quoted.
             let value = body[body.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-            switch body[body.startIndex..<colon] {
-            case "text":     text = scalar(value)
-            case "start_ms": start = Double(value).map { $0 / 1000 }
-            case "end_ms":   end = Double(value).map { $0 / 1000 }
+            let ms = Double(value).map { $0 / 1000 }
+            switch (isWord, body[body.startIndex..<colon]) {
+            case (false, "text"):     text = scalar(value)
+            case (false, "start_ms"): start = ms
+            case (false, "end_ms"):   end = ms
+            case (true, "text"):      wordText = scalar(value)
+            case (true, "start_ms"):  wordStart = ms
+            case (true, "end_ms"):    wordEnd = ms
             default: break
             }
         }
@@ -616,5 +754,46 @@ enum LyricsFile {
                 .replacingOccurrences(of: "\\\\", with: "\\")
         }
         return value
+    }
+}
+
+/// Lyrics the Music app already fetched for itself. Apple serves some tracks'
+/// lyrics (lots of K-pop) only to its own client — every endpoint 404s for the
+/// web player token Musique borrows — but the Music app's URL cache keeps the
+/// response, word timing included, once the track has played there.
+/// shortcut: depends on the Music app's private CFNetwork cache layout and its
+/// request URL; only covers tracks played in the Music app on this Mac.
+enum MusicAppLyricsCache {
+    static func ttml(songID: String) -> String? {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/com.apple.Music")
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(dir.appendingPathComponent("Cache.db").path, &db,
+                              SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        let sql = """
+            SELECT d.isDataOnFS, d.receiver_data FROM cfurl_cache_response r
+            JOIN cfurl_cache_receiver_data d ON d.entry_ID = r.entry_ID
+            WHERE r.request_key LIKE ? AND r.request_key LIKE '%include=syllable-lyrics%'
+            ORDER BY r.time_stamp DESC LIMIT 1
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        let pattern = "%equivalents%5D=\(songID)&%"
+        sqlite3_bind_text(stmt, 1, pattern, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(stmt) == SQLITE_ROW,
+              let bytes = sqlite3_column_blob(stmt, 1) else { return nil }
+        let blob = Data(bytes: bytes, count: Int(sqlite3_column_bytes(stmt, 1)))
+        // Large bodies live beside the database, the column holding the file name.
+        let body = sqlite3_column_int(stmt, 0) == 1
+            ? try? Data(contentsOf: dir.appendingPathComponent("fsCachedData")
+                .appendingPathComponent(String(decoding: blob, as: UTF8.self)))
+            : blob
+        guard let body, let root = try? JSONSerialization.jsonObject(with: body) else { return nil }
+        return AppleMusicLyricsClient.firstTTML(in: root)
     }
 }
