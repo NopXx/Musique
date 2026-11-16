@@ -94,6 +94,11 @@ enum L10n {
     static var miniplayerAnimArt: String { tr("เฉพาะปก", "Artwork only") }
     static var miniplayerAnimFull: String { tr("เต็ม (รวม backdrop)", "Full (with backdrop)") }
     static var miniplayerAnimFullscreen: String { tr("แสดง Animation เต็มจอ", "Show fullscreen animation") }
+    static var miniplayerDesktopEnabled: String { tr("Mini player บน desktop", "Desktop mini player") }
+    static var miniplayerDesktopLevel: String { tr("ตำแหน่งหน้าต่าง", "Window level") }
+    static var miniplayerLevelFloating: String { tr("ลอยเหนือทุกหน้าต่าง", "Above all windows") }
+    static var miniplayerLevelNormal: String { tr("ปกติ", "Normal") }
+    static var miniplayerLevelDesktop: String { tr("ติด desktop", "On desktop") }
     static var miniplayerNoTrack: String { tr("ยังไม่ได้เล่นเพลง", "No track playing") }
     static var miniplayerTrackTooShort: String { tr("เพลงสั้นเกินไป", "Track too short") }
     static var miniplayerOpenMusic: String { tr("เปิด Apple Music แล้วกด Play", "Open Apple Music and press Play") }

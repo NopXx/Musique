@@ -199,8 +199,7 @@ struct AnimationFullscreenView: View {
                 .frame(width: geo.size.width * 0.45)
 
             if let snap = viewModel.snapshot {
-                FullscreenLyricsView(lines: lyrics, position: snap.position,
-                                     isPlaying: snap.isPlaying)
+                FullscreenLyricsView(lines: lyrics, playback: snap)
                     .frame(maxWidth: .infinity)
                     .padding(.trailing, 56)
                     .allowsHitTesting(false)
@@ -285,76 +284,95 @@ private struct FullscreenGlyph: View {
 }
 
 /// The whole song in one column, scrolled so the line being sung sits at a fixed
-/// anchor — what Spotify and YouTube Music both do. The five fixed slots this
-/// replaces had to blank the middle one to swap its text, which read as the line
-/// vanishing; a column that moves never has to.
-private struct FullscreenLyricsView: View {
+/// anchor — the whole column moves as one when the line changes. (A per-line
+/// staggered ripple was tried and taken back out.)
+struct FullscreenLyricsView: View {
     let lines: [LyricLine]
-    let position: Double
-    let isPlaying: Bool
+    /// The playing track. Its position is projected to every frame here, so the
+    /// line changes when it's sung — not at the next once-a-second snapshot,
+    /// which came up to a second late and had the first word gone already.
+    let playback: NowPlayingSnapshot
+    /// One size for every line, like Apple Music: the sung one is told apart by
+    /// brightness, not by growing. Defaults are the fullscreen window's.
+    var fontSize: CGFloat = 30
+    var spacing: CGFloat = 22
 
-    /// Where the sung line parks. Slightly above centre, so what is coming gets
-    /// more room than what has gone.
-    private let anchor = UnitPoint(x: 0, y: 0.42)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let scrollLead = 0.3
+
+    /// Where the sung line parks, as a fraction of the height — near
+    /// the top, as Apple Music does (~13% on a capture), leaving room for one
+    /// faded line of what's gone and the rest for what's coming. 0.5 centres it.
+    var anchor: CGFloat = 0.14
 
     var body: some View {
+        GeometryReader { geo in
+            // Reduce Motion: still keeps time, just stops sweeping per frame.
+            TimelineView(.animation(minimumInterval: reduceMotion ? 0.25 : 1.0 / 30.0,
+                                    paused: !playback.isPlaying)) { context in
+                column(at: playback.livePosition(at: context.date), height: geo.size.height)
+            }
+        }
+        // Lines leave through the top and bottom edges; fade them rather than
+        // slicing them off mid-glyph.
+        .mask(LinearGradient(stops: [.init(color: .clear, location: 0),
+                                     .init(color: .white, location: 0.1),
+                                     .init(color: .white, location: 0.82),
+                                     .init(color: .clear, location: 1)],
+                             startPoint: .top, endPoint: .bottom))
+        .clipped()
+    }
+
+    private func column(at position: Double, height: CGFloat) -> some View {
         let all = displayed
         let current = all.lastIndex { $0.time <= position } ?? 0
-        ScrollViewReader { proxy in
+        // The scroll spring takes ~0.5s to land; starting it on the line's own time
+        // put the line in place after its first words were sung. Scroll a beat
+        // early so it arrives as it's sung — the highlight still uses `current`.
+        let target = all.lastIndex { $0.time <= position + Self.scrollLead } ?? 0
+        return ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: spacing) {
                     ForEach(all.indices, id: \.self) { n in
-                        line(all[n], distance: abs(n - current)).id(n)
+                        line(all[n], distance: abs(n - current), position: position).id(n)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Air at both ends, or the first and last lines could never reach
                 // the anchor and the column would jerk at the edges of the song.
-                .padding(.vertical, 260)
-                .animation(.spring(response: 0.34, dampingFraction: 0.78), value: current)
+                .padding(.vertical, height)
+                // Quick, so the new line brightens on its first word, not after it.
+                .animation(.easeOut(duration: 0.12), value: current)
             }
             .scrollDisabled(true)
             .scrollIndicators(.hidden)
-            .onChange(of: current, initial: true) { _, n in
+            .onChange(of: target, initial: true) { _, n in
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                    proxy.scrollTo(n, anchor: anchor)
+                    proxy.scrollTo(n, anchor: UnitPoint(x: 0, y: anchor))
                 }
             }
         }
-        // The column is as tall as the screen, so it has to fade out at both ends
-        // — otherwise lines are sliced off mid-glyph by the window edge.
-        .mask(LinearGradient(stops: [.init(color: .clear, location: 0),
-                                     .init(color: .white, location: 0.18),
-                                     .init(color: .white, location: 0.82),
-                                     .init(color: .clear, location: 1)],
-                             startPoint: .top, endPoint: .bottom))
-        // Same reasoning as the clock: the background can be any brightness, and a
-        // shadow is cheaper than a scrim.
-        .shadow(color: .black.opacity(0.6), radius: 16, x: 0, y: 3)
     }
 
     @ViewBuilder
-    private func line(_ l: LyricLine, distance: Int) -> some View {
+    private func line(_ l: LyricLine, distance: Int, position: Double) -> some View {
         Group {
             if distance == 0, !l.segments.isEmpty {
-                KaraokeLyricText(line: l, position: position, isPlaying: isPlaying)
+                KaraokeLyricText(line: l, position: position)
             } else {
                 Text(l.text.isEmpty ? " " : l.text)
-                    .foregroundStyle(.white.opacity(distance == 0 ? 1
-                                                    : distance == 1 ? 0.4
-                                                    : distance == 2 ? 0.2 : 0.12))
+                    .foregroundStyle(.white.opacity(distance == 0 ? 1 : distance <= 2 ? 0.34 : 0.22))
             }
         }
-            .font(.system(size: distance == 0 ? 32 : 26,
-                          weight: distance == 0 ? .bold : .semibold,
-                          design: .rounded))
-            // Falls off with distance rather than one dim value for everything
-            // else: it's what gives the column a reading position. Sung and unsung
-            // dim the same amount — both players do that, and telling them apart
-            // only invited the eye to read backwards.
+            .font(.system(size: fontSize, weight: .bold))
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel(l.text)
+            // The background can be any brightness, and a shadow is cheaper than a
+            // scrim. Per line, not on the column: on the scroll view it cast the
+            // shadow of a box, which showed as grey blocks on a light cover.
+            .shadow(color: .black.opacity(0.45), radius: fontSize * 0.35, x: 0, y: 1)
     }
 
     /// `lines` with a dots marker dropped into every stretch of the song nobody
@@ -362,7 +380,7 @@ private struct FullscreenLyricsView: View {
     /// middle. Without one the column sits on a line that finished half a minute
     /// ago, which reads as the sync having broken.
     ///
-    /// ponytail: rebuilt on every tick rather than cached — it's a walk over a few
+    /// ponytail: rebuilt on every frame rather than cached — it's a walk over a few
     /// dozen lines next to a layout pass. Cache it in the parent if a song ever
     /// ships thousands.
     private var displayed: [LyricLine] {
@@ -387,44 +405,18 @@ private struct FullscreenLyricsView: View {
     private let dots = "• • •"
 }
 
-/// Renders just the current line on an animation clock. The player snapshot only
-/// advances once per second, so the local clock extrapolates between snapshots;
-/// otherwise several short Korean syllables would light up in a single jump.
+/// The sung line: every syllable drawn grey, then white over it up to how far
+/// it's been sung — a soft-edged wipe through the word, not a whole syllable
+/// brightening at once. `position` arrives already projected to the frame.
 private struct KaraokeLyricText: View {
     let line: LyricLine
     let position: Double
-    let isPlaying: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var anchorPosition: Double
-    @State private var anchorDate: Date
-
-    init(line: LyricLine, position: Double, isPlaying: Bool) {
-        self.line = line
-        self.position = position
-        self.isPlaying = isPlaying
-        _anchorPosition = State(initialValue: position)
-        _anchorDate = State(initialValue: Date())
-    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0,
-                                paused: !isPlaying || reduceMotion)) { context in
-            highlightedText(at: livePosition(context.date))
-        }
-        .onChange(of: position) { _, newPosition in
-            anchorPosition = newPosition
-            anchorDate = Date()
-        }
-        .onChange(of: isPlaying) { _, _ in
-            anchorPosition = position
-            anchorDate = Date()
-        }
-    }
-
-    private func livePosition(_ date: Date) -> Double {
-        guard isPlaying, !reduceMotion else { return position }
-        return anchorPosition + date.timeIntervalSince(anchorDate)
+        highlightedText(at: position)
+            .textRenderer(SungWordRenderer(lift: reduceMotion ? 0 : 1.5))
     }
 
     /// Builds one wrapping SwiftUI Text while retaining the literal whitespace in
@@ -442,27 +434,149 @@ private struct KaraokeLyricText: View {
             guard cursor < content.endIndex,
                   let range = content.range(of: segment.text,
                                             range: cursor..<content.endIndex) else { continue }
-            let opacity = segment.highlightOpacity(at: playbackPosition)
+            let sung = Self.progress(of: segment, at: playbackPosition)
             if cursor < range.lowerBound {
-                result = result + styled(String(content[cursor..<range.lowerBound]), opacity: opacity)
+                result = result + styled(String(content[cursor..<range.lowerBound]), sung: sung)
             }
-            result = result + styled(String(content[range]), opacity: opacity)
+            result = result + styled(String(content[range]), sung: sung,
+                                     held: segment.end - segment.start >= Self.heldNote)
             cursor = range.upperBound
             matchedAny = true
         }
 
         guard matchedAny else { return Text(content).foregroundColor(.white) }
         if cursor < content.endIndex {
-            let opacity = line.segments.last.map {
-                $0.highlightOpacity(at: playbackPosition)
-            } ?? 1
-            result = result + styled(String(content[cursor...]), opacity: opacity)
+            let sung = line.segments.last.map { Self.progress(of: $0, at: playbackPosition) } ?? 1
+            result = result + styled(String(content[cursor...]), sung: sung)
         }
         return result
     }
 
-    private func styled(_ text: String, opacity: Double) -> Text {
-        Text(text).foregroundColor(.white.opacity(opacity))
+    private func styled(_ text: String, sung: Double, held: Bool = false) -> Text {
+        Text(text)
+            .foregroundColor(.white)
+            .customAttribute(SungProgress(value: sung, held: held))
     }
 
+    /// A syllable sung at least this long is a held note and gets the wave.
+    private static let heldNote = 1.0
+
+    /// 0 before the syllable, 1 once it's sung, linear in between — the wipe
+    /// should track the voice, not ease around it.
+    private static func progress(of segment: TimedLyricSegment, at position: Double) -> Double {
+        min(max((position - segment.start) / max(segment.end - segment.start, 0.01), 0), 1)
+    }
+}
+
+/// How far through its syllable a run of the sung line is (0…1).
+private struct SungProgress: TextAttribute {
+    var value: Double
+    /// A held note: drawn letter by letter, rising as the colour reaches each.
+    var held = false
+}
+
+/// Draws the sung line: each run grey underneath, white on top masked by a
+/// gradient whose soft edge sits at the run's progress, so the colour sweeps
+/// through the letters. A syllable being sung also glows, and lifts a hair and
+/// stays up. A renderer because the line is one `Text` built from many pieces;
+/// nothing else can paint part of one word.
+private struct SungWordRenderer: TextRenderer {
+    var lift: CGFloat
+    /// Grey of the not-yet-sung part of the sung line — brighter than the lines
+    /// around it, so the line still reads as the current one before it's sung.
+    var unsung: Double = 0.45
+
+    func draw(layout: Text.Layout, in context: inout GraphicsContext) {
+        for line in layout {
+            for run in line {
+                guard let sung = run[SungProgress.self]?.value else {
+                    context.draw(run)
+                    continue
+                }
+                let rise = lift * sung * sung * (3 - 2 * sung)
+                if let attr = run[SungProgress.self], attr.held, sung > 0, sung < 1, lift > 0 {
+                    drawHeld(run, sung: sung, baseRise: rise, in: context)
+                    continue
+                }
+                var ctx = context
+                ctx.translateBy(x: 0, y: -rise)
+                // A held note that's done keeps the pose its wave ended on, rather
+                // than dropping back the moment the next syllable starts.
+                if let attr = run[SungProgress.self], attr.held, sung >= 1, lift > 0 {
+                    let box = run.typographicBounds.rect
+                    ctx.translateBy(x: box.midX, y: box.midY - 3)
+                    ctx.scaleBy(x: 1.06, y: 1.06)
+                    ctx.translateBy(x: -box.midX, y: -box.midY)
+                }
+
+                var grey = ctx
+                grey.opacity = unsung
+                grey.draw(run)
+                guard sung > 0 else { continue }
+
+                if sung < 1 {
+                    // Glow under the syllable being sung, peaking mid-syllable. Its own
+                    // pass: a shadow on the clipped layer below outlined the clip box.
+                    var glow = ctx
+                    glow.opacity = 0.35 * sin(sung * .pi)
+                    glow.addFilter(.blur(radius: 6))
+                    glow.draw(run)
+                }
+
+                var lit = ctx
+                if sung < 1 {
+                    let rect = run.typographicBounds.rect
+                    // A few points of feather, whatever the word's width.
+                    let feather = min(0.5, 8 / max(rect.width, 1))
+                    let edge = sung * (1 + feather)
+                    lit.clipToLayer { layer in
+                        layer.fill(Path(rect), with: .linearGradient(
+                            Gradient(stops: [.init(color: .white, location: max(0, edge - feather)),
+                                             .init(color: .clear, location: min(1, edge))]),
+                            startPoint: CGPoint(x: rect.minX, y: rect.midY),
+                            endPoint: CGPoint(x: rect.maxX, y: rect.midY)))
+                    }
+                }
+                lit.draw(run)
+            }
+        }
+    }
+
+    /// A held note while it's being sung: a glow that builds over the note, and
+    /// the letters lit one by one, each rising a few points (and the word swelling
+    /// a touch) as the colour reaches it — Apple Music's long-vowel wave. Letter
+    /// by letter because a run only moves as a whole.
+    private func drawHeld(_ run: Text.Layout.Run, sung: Double, baseRise: CGFloat,
+                          in context: GraphicsContext) {
+        let swell = sin(min(1, sung * 1.2) * .pi / 2)
+
+        var glow = context
+        glow.translateBy(x: 0, y: -baseRise)
+        glow.opacity = 0.5 * swell
+        glow.addFilter(.blur(radius: 6 + 6 * swell))
+        glow.draw(run)
+
+        let slices = Array(run)
+        let count = Double(slices.count)
+        let scale = 1 + 0.06 * swell
+        for (i, slice) in slices.enumerated() {
+            let reached = sung * count - Double(i)
+            let lit = min(max(reached + 0.5, 0), 1)
+            let t = min(max(reached, 0), 1)
+            let rise = baseRise + 3 * CGFloat(t * t * (3 - 2 * t))
+            let box = slice.typographicBounds.rect
+            var ctx = context
+            ctx.translateBy(x: box.midX, y: box.midY - rise)
+            ctx.scaleBy(x: scale, y: scale)
+            ctx.translateBy(x: -box.midX, y: -box.midY)
+
+            var grey = ctx
+            grey.opacity = unsung
+            grey.draw(slice)
+            guard lit > 0 else { continue }
+            var white = ctx
+            white.opacity = lit
+            white.draw(slice)
+        }
+    }
 }

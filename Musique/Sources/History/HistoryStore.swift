@@ -3,7 +3,7 @@ import SQLite3
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-struct HistoryEvent: Identifiable, Hashable {
+struct HistoryEvent: Identifiable, Hashable, Encodable {
     let id: Int64
     let timestamp: Date
     let eventType: String
@@ -12,6 +12,17 @@ struct HistoryEvent: Identifiable, Hashable {
     let albumName: String
     let duration: Double
     let position: Double
+}
+
+struct SongSummary: Identifiable, Equatable, Encodable {
+    var id: String { "\(artistName) - \(trackName)" }
+    let trackName: String
+    let artistName: String
+    let albumName: String
+    let duration: Double
+    let playCount: Int
+    let firstPlayed: Date
+    let lastPlayed: Date
 }
 
 struct EditRule: Identifiable, Hashable {
@@ -48,11 +59,15 @@ actor HistoryStore {
     private var db: OpaquePointer?
     let url: URL
 
-    init() {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Musique", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        self.url = dir.appendingPathComponent("history.db")
+    init(url customURL: URL? = nil) {
+        if let customURL {
+            self.url = customURL
+        } else {
+            let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+                .appendingPathComponent("Musique", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            self.url = dir.appendingPathComponent("history.db")
+        }
         if sqlite3_open(url.path, &db) != SQLITE_OK {
             NSLog("[HistoryStore] failed to open db at \(url.path)")
             db = nil
@@ -162,6 +177,119 @@ actor HistoryStore {
         guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM events;", -1, &stmt, nil) == SQLITE_OK else { return 0 }
         defer { sqlite3_finalize(stmt) }
         return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int64(stmt, 0)) : 0
+    }
+
+    func totalStats() -> (songCount: Int, playCount: Int) {
+        guard let db else { return (0, 0) }
+        var playCount = 0
+        var songCount = 0
+
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT COUNT(*), COUNT(DISTINCT lower(artist_name) || ' - ' || lower(track_name)) FROM events;", -1, &stmt, nil) == SQLITE_OK {
+            defer { sqlite3_finalize(stmt) }
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                playCount = Int(sqlite3_column_int64(stmt, 0))
+                songCount = Int(sqlite3_column_int64(stmt, 1))
+            }
+        }
+        return (songCount, playCount)
+    }
+
+    func searchSongs(query: String? = nil, sort: String? = nil, limit: Int = 100) -> [SongSummary] {
+        guard let db else { return [] }
+        let trimmedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let hasQuery = !trimmedQuery.isEmpty
+
+        var sql = """
+        SELECT track_name, artist_name, MAX(album_name), MAX(duration), COUNT(*) as play_count,
+               MIN(timestamp) as first_played, MAX(timestamp) as last_played
+        FROM events
+        """
+
+        if hasQuery {
+            sql += " WHERE track_name LIKE ? OR artist_name LIKE ? OR album_name LIKE ?"
+        }
+
+        sql += " GROUP BY lower(track_name), lower(artist_name)"
+
+        if sort == "plays" {
+            sql += " ORDER BY play_count DESC, last_played DESC"
+        } else {
+            sql += " ORDER BY last_played DESC"
+        }
+
+        sql += " LIMIT ?;"
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            NSLog("[HistoryStore] searchSongs prepare failed: \(String(cString: sqlite3_errmsg(db)))")
+            return []
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var bindIdx: Int32 = 1
+        if hasQuery {
+            let pattern = "%\(trimmedQuery)%"
+            sqlite3_bind_text(stmt, bindIdx, pattern, -1, SQLITE_TRANSIENT); bindIdx += 1
+            sqlite3_bind_text(stmt, bindIdx, pattern, -1, SQLITE_TRANSIENT); bindIdx += 1
+            sqlite3_bind_text(stmt, bindIdx, pattern, -1, SQLITE_TRANSIENT); bindIdx += 1
+        }
+        sqlite3_bind_int(stmt, bindIdx, Int32(limit))
+
+        var out: [SongSummary] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let track = readText(stmt, 0)
+            let artist = readText(stmt, 1)
+            let album = readText(stmt, 2)
+            let duration = sqlite3_column_double(stmt, 3)
+            let count = Int(sqlite3_column_int64(stmt, 4))
+            let firstSec = sqlite3_column_int64(stmt, 5)
+            let lastSec = sqlite3_column_int64(stmt, 6)
+
+            out.append(SongSummary(
+                trackName: track,
+                artistName: artist,
+                albumName: album,
+                duration: duration,
+                playCount: count,
+                firstPlayed: Date(timeIntervalSince1970: TimeInterval(firstSec)),
+                lastPlayed: Date(timeIntervalSince1970: TimeInterval(lastSec))
+            ))
+        }
+        return out
+    }
+
+    func songEvents(track: String, artist: String, limit: Int = 100) -> [HistoryEvent] {
+        guard let db else { return [] }
+        let sql = """
+        SELECT id, timestamp, event_type, track_name, artist_name, album_name, duration, position
+        FROM events
+        WHERE lower(track_name) = lower(?) AND lower(artist_name) = lower(?)
+        ORDER BY timestamp DESC
+        LIMIT ?;
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, track, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, artist, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int(stmt, 3, Int32(limit))
+
+        var out: [HistoryEvent] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            out.append(HistoryEvent(
+                id: sqlite3_column_int64(stmt, 0),
+                timestamp: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 1))),
+                eventType: readText(stmt, 2),
+                trackName: readText(stmt, 3),
+                artistName: readText(stmt, 4),
+                albumName: readText(stmt, 5),
+                duration: sqlite3_column_double(stmt, 6),
+                position: sqlite3_column_double(stmt, 7)
+            ))
+        }
+        return out
     }
 
     // MARK: - Edit rules

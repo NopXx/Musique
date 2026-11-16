@@ -21,6 +21,9 @@ final class PlayerMonitor: ObservableObject {
 
     private var basePosition: Double = 0
     private var basePositionAt: Date = .distantPast
+    /// Ticks since the position was last read from the player itself rather
+    /// than carried forward on the wall clock (a seek sends no notification).
+    private var ticksSinceSync = 0
     private var tickTimer: Timer?
     private var musicObserverToken: NSObjectProtocol?
     private var spotifyObserverToken: NSObjectProtocol?
@@ -107,7 +110,10 @@ final class PlayerMonitor: ObservableObject {
         NSLog("[PlayerMonitor] snap source=\(snap.source.rawValue) title=\(snap.title) artist=\(snap.artist) dur=\(snap.duration) pos=\(snap.position)")
         basePosition = snap.position
         basePositionAt = Date()
-        snapshot = snap
+        ticksSinceSync = 0
+        var stamped = snap
+        stamped.positionDate = basePositionAt
+        snapshot = stamped
     }
 
     /// Choose among the candidate snapshots. A playing source always wins over a
@@ -166,6 +172,22 @@ final class PlayerMonitor: ObservableObject {
         )
     }
 
+    /// The player's own position, for resyncing the clock. Nil for the web
+    /// source (it is projected from its last event) and for a player that has
+    /// quit — reading a property would relaunch it.
+    private func playerPosition(for source: PlaybackSource) -> Double? {
+        switch source {
+        case .appleMusic:
+            guard isAppRunning(musicBundleID) else { return nil }
+            return musicApp?.playerPosition
+        case .spotify:
+            guard isAppRunning(spotifyBundleID) else { return nil }
+            return spotifyApp?.playerPosition
+        case .webScrobbler:
+            return nil
+        }
+    }
+
     private func isAppRunning(_ bundleID: String) -> Bool {
         NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == bundleID }
     }
@@ -186,7 +208,15 @@ final class PlayerMonitor: ObservableObject {
             return
         }
         guard var snap = snapshot, snap.isPlaying else { return }
-        let elapsed = Date().timeIntervalSince(basePositionAt)
+        ticksSinceSync += 1
+        if ticksSinceSync >= 5, let fresh = playerPosition(for: snap.source) {
+            ticksSinceSync = 0
+            basePosition = fresh
+            basePositionAt = Date()
+        }
+        let now = Date()
+        snap.positionDate = now
+        let elapsed = now.timeIntervalSince(basePositionAt)
         let newPos = basePosition + elapsed
         if snap.duration > 0 && newPos > snap.duration {
             snap.position = snap.duration

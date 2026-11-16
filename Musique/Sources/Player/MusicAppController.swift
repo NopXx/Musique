@@ -125,6 +125,16 @@ struct NowPlayingSnapshot {
     var position: Double
     var persistentID: String
     var source: PlaybackSource = .appleMusic
+    /// When `position` was true. The snapshot is only republished once a
+    /// second; lyrics project from here to the frame instead of waiting for it.
+    var positionDate = Date()
+
+    /// `position` carried forward to `date` while playing.
+    func livePosition(at date: Date) -> Double {
+        guard isPlaying else { return position }
+        let p = position + date.timeIntervalSince(positionDate)
+        return duration > 0 ? min(p, duration) : p
+    }
 
     var isPlaying: Bool { state.lowercased() == "playing" }
     var hasTrack: Bool { !title.isEmpty }

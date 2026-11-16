@@ -345,4 +345,72 @@ final class MusiqueTests: XCTestCase {
         }
         XCTAssertGreaterThan(inkWidth(at: 0.25), inkWidth(at: 0.9) * 1.2)
     }
+
+    func testHistoryStoreSongAggregationAndSearch() async throws {
+        let tempDB = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".db")
+        defer { try? FileManager.default.removeItem(at: tempDB) }
+        let store = HistoryStore(url: tempDB)
+
+        let now = Date()
+        await store.insertEvent(type: "play", title: "OMG", artist: "NewJeans", album: "OMG", duration: 212, position: 10, at: now.addingTimeInterval(-3600))
+        await store.insertEvent(type: "play", title: "OMG", artist: "NewJeans", album: "OMG", duration: 212, position: 20, at: now.addingTimeInterval(-1800))
+        await store.insertEvent(type: "play", title: "Ditto", artist: "NewJeans", album: "OMG", duration: 185, position: 10, at: now.addingTimeInterval(-7200))
+        await store.insertEvent(type: "play", title: "Supernova", artist: "aespa", album: "Armageddon", duration: 179, position: 10, at: now)
+
+        let stats = await store.totalStats()
+        XCTAssertEqual(stats.playCount, 4)
+        XCTAssertEqual(stats.songCount, 3)
+
+        // Search by artist
+        let njSongs = await store.searchSongs(query: "newjeans")
+        XCTAssertEqual(njSongs.count, 2)
+
+        // Sort by plays
+        let topSongs = await store.searchSongs(sort: "plays")
+        XCTAssertEqual(topSongs.first?.trackName, "OMG")
+        XCTAssertEqual(topSongs.first?.playCount, 2)
+
+        // Search by album
+        let albumSongs = await store.searchSongs(query: "Armageddon")
+        XCTAssertEqual(albumSongs.count, 1)
+        XCTAssertEqual(albumSongs.first?.trackName, "Supernova")
+
+        // Song events
+        let omgEvents = await store.songEvents(track: "OMG", artist: "NewJeans")
+        XCTAssertEqual(omgEvents.count, 2)
+    }
+
+    func testDebugServerQueryParamsParsing() {
+        let qs = "q=NewJeans&sort=plays&limit=50&track=Super%20Shy"
+        let params = DebugServer.parseQueryParams(qs)
+        XCTAssertEqual(params["q"], "NewJeans")
+        XCTAssertEqual(params["sort"], "plays")
+        XCTAssertEqual(params["limit"], "50")
+        XCTAssertEqual(params["track"], "Super Shy")
+    }
+
+    func testSongsResponseSerialization() throws {
+        let summary = SongSummary(
+            trackName: "Super Shy", artistName: "NewJeans", albumName: "Get Up",
+            duration: 154, playCount: 10,
+            firstPlayed: Date(timeIntervalSince1970: 1700000000),
+            lastPlayed: Date(timeIntervalSince1970: 1700001000)
+        )
+        let resp = DebugServer.SongsResponse(totalSongs: 1, totalPlays: 10, songs: [summary])
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(resp)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["totalSongs"] as? Int, 1)
+        XCTAssertEqual(json["totalPlays"] as? Int, 10)
+        let songs = try XCTUnwrap(json["songs"] as? [[String: Any]])
+        XCTAssertEqual(songs.first?["trackName"] as? String, "Super Shy")
+    }
+
+    func testDebugServerServesSongsHTML() {
+        let html = DebugServer.songsHTML
+        XCTAssertTrue(html.contains("Musique Song Intelligence"))
+        XCTAssertTrue(html.contains("api/history/songs"))
+        XCTAssertTrue(html.contains("api/lyrics"))
+    }
 }

@@ -125,13 +125,22 @@
 - [ ] AnimationFullscreenView — `กดเพื่อปิด`
 
 ### Desktop mini player
-- [ ] Mini player เป็นหน้าต่างลอยบน desktop (แยกจาก menu bar `NSPopover`) — reuse `MiniPlayerView` เดิมใน borderless `NSPanel`
-- [ ] Toggle เปิด/ปิด จาก menu bar + setting `miniplayer.desktop_enabled`
-- [ ] Window level ให้เลือก: ลอยเหนือทุกหน้าต่าง (`.floating`) / ติด desktop (`kCGDesktopIconWindowLevel`) / ปกติ
-- [ ] ลากย้ายได้ (`isMovableByWindowBackground`) + จำตำแหน่งต่อจอ (`setFrameAutosaveName`)
-- [ ] `collectionBehavior` `.canJoinAllSpaces` + `.stationary` — โผล่ทุก Space, ไม่หายตอน Mission Control
-- [ ] ระวัง: ห้ามใช้ SwiftUI `.popover` ซ้อนข้างใน (ดู memory `no-nested-popover-miniplayer`) — ใช้ overlay หรือ NSWindow แยก
+- [x] `DesktopMiniPlayerController` — borderless `NSPanel`, view model เดียวกับ popover
+- [x] Toggle จาก right-click menu bar + setting `miniplayer.desktop_enabled` (Settings → Mini Player → Desktop)
+- [x] หน้าตาเลือกได้ `miniplayer.desktop_style`: `card` (`DesktopPlayerView` 340×340 ปกเต็ม) / `classic` (`MiniPlayerView` เดียวกับ popover)
+- [x] Window level `miniplayer.desktop_level`: `floating` / `normal` / `desktop` (icon level + 1)
+- [x] ลากย้ายได้ (`WindowDragGesture`) + จำตำแหน่ง (`setFrameAutosaveName`) — จำตำแหน่งเดียว ไม่แยกต่อจอ; หลุดจอ → กลับมุมขวาบน
+- [x] `collectionBehavior` `.canJoinAllSpaces` + `.stationary`
+- [x] เนื้อเพลง: card ยืดหน้าต่างลงเป็นแถบ 2–3 บรรทัดใต้ปก (ขอบบนนิ่ง)
+- [ ] แถบเนื้อเพลงยืดเลยขอบล่างจอถ้าหน้าต่างชิดล่าง
+- [ ] ลองบนเครื่องจริง: ระดับ `desktop` กดปุ่มได้, edit overlay (classic) พิมพ์ได้
 - [ ] ซ่อนอัตโนมัติตอน fullscreen app / ตอนไม่มีเพลง (optional)
+
+### Mini player lyrics
+- [x] ปุ่มเนื้อเพลงใน footer (`miniplayer.lyrics`), footer เหลือ 5 ปุ่ม (ตัดเต็มจอ + แจ้งเตือน)
+- [x] Animation แบบ Apple Music: ปก morph เป็น thumbnail (`matchedGeometryEffect`), ข้อความวิ่งตามขอบปก; motion cover morph ด้วยภาพนิ่งแล้ว fade วิดีโอกลับ
+- [x] `LyricsService` dedupe lookup ที่วิ่งซ้อน (เดิมผลว่างเขียนทับ cache)
+- [ ] เพลงไม่มีเนื้อเพลง: กดปุ่มแล้วไม่มีอะไรบอก
 
 ### Web Scrobbler ingest (รับ webhook จาก [web-scrobbler](https://github.com/web-scrobbler/web-scrobbler))
 เป้าหมาย: เพลงที่เล่นในเว็บ (YouTube, SoundCloud, Bandcamp ฯลฯ) ผ่าน extension web-scrobbler ส่งเข้า Musique เป็น source ที่สาม ถัดจาก Apple Music / Spotify

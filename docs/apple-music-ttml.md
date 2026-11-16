@@ -1,16 +1,18 @@
 # Apple Music TTML lyrics — implementation and agent handoff
 
-Last updated: 2026-11-03
+Last updated: 2026-09-11
 
 This document is the source of truth for Musique's time-synced lyrics work. It
-describes what is implemented, why it is built this way, and how to diagnose
-it.
+describes what is implemented in the current working tree, why it is built this
+way, how to diagnose it, the parsed-lyrics loopback endpoint, and the optional
+next step of exposing the original raw TTML document.
 
-> Status: Apple Music private TTML fetching, parsing, LRCLIB fallback and
-> per-syllable fullscreen rendering are implemented. Tracks from every source
-> (Apple Music, Spotify, Web Scrobbler) are eligible for Apple catalog matching
-> and TTML retrieval. Successful TTML responses are prefetched on every
-> selected-track change and cached on disk; fullscreen is only a consumer.
+> Status at handoff: Apple Music private TTML fetching, parsing, LRCLIB
+> fallback, per-syllable fullscreen rendering, and the web/debug-server lyrics
+> JSON endpoint are implemented. Tracks playing in either Apple Music or
+> Spotify are eligible for Apple catalog matching and TTML retrieval. Successful
+> TTML responses are prefetched on every selected-track change and cached
+> locally; fullscreen is only a consumer.
 
 ## Goal and scope
 
@@ -22,7 +24,8 @@ For a track playing in Music.app or Spotify, Musique should:
 4. Retain line and syllable timing from the returned TTML.
 5. Render karaoke-style progress in the fullscreen lyrics UI.
 6. Fall back to LRCLIB when Apple lyrics are unavailable.
-7. Persist the original TTML locally for reuse.
+7. Make parsed lyrics available to local tools through the loopback HTTP API.
+8. Persist original TTML locally for reuse.
 
 The implementation uses [MusanovaKit](https://github.com/rryam/MusanovaKit),
 currently resolved to version `4.0.0` (revision
@@ -30,15 +33,19 @@ currently resolved to version `4.0.0` (revision
 privileged request and supplies the TTML parser. This remains a private,
 undocumented Apple endpoint and can change without notice.
 
-## Files
+## Current working-tree changes
 
-| File | Responsibility |
+These changes are intentionally uncommitted at the time of this handoff. Check
+`git status` before editing and do not discard them.
+
+| File | Current responsibility |
 | --- | --- |
 | `project.yml` | Adds MusanovaKit `from: 4.0.0` and links it to the main app target. |
-| `Musique/Sources/Lyrics/LyricsService.swift` | Apple TTML client, catalog matching, token discovery, TTML-to-local-model mapping, LRCLIB fallback, prefetcher, and local TTML cache. |
-| `Musique/Sources/App.swift` | Attaches `LyricsPrefetcher` before `PlayerMonitor.start()`. |
+| `Musique/Sources/Lyrics/LyricsService.swift` | Apple TTML client, catalog matching, token discovery, TTML-to-local-model mapping, LRCLIB fallback, and local cache. |
 | `Musique/Sources/UI/AnimationFullscreenView.swift` | Loads lyrics for the active source and renders timed syllable highlighting at up to 30 fps. |
-| `MusiqueTests/MusiqueTests.swift` | Tests segment highlighting, artist matching, Spotify eligibility, stable TTML cache keys, and the lookup identity. |
+| `Musique/Sources/Services/DebugServer.swift` | Encodes lyric models and serves `/api/lyrics` for the web dashboard. |
+| `web/index.html` | Requests `/api/lyrics` and distinguishes syllable TTML from line-synced fallback results. |
+| `MusiqueTests/MusiqueTests.swift` | Tests segment highlighting, artist matching, Spotify eligibility, and stable TTML keys. |
 
 Because `Musique.xcodeproj` is generated, edit `project.yml`, then run
 `xcodegen generate`. Do not make lasting dependency changes only in the
@@ -56,14 +63,14 @@ PlayerMonitor.snapshot: NowPlayingSnapshot
   └─ AnimationFullscreenView.task(id: stable lyrics identity)
   ▼
 LyricsService.lines(..., source: snapshot.source)
-  ├─ any source (Apple Music, Spotify, Web Scrobbler)
+  ├─ Apple Music or Spotify source
   │    ▼
   │  AppleMusicLyricsClient.lines(...)
   │    1. Local TTML cache lookup
   │    2. MusicKit subscriber authorization
   │    3. AMPWebPlay developer-token discovery
   │    4. Apple catalog search, then iTunes ID lookup fallback
-  │    5. MusanovaKit MusicLyricsRequest → /syllable-lyrics
+  │    5. Music app cache, then syllable-lyrics / lyrics requests
   │    6. Save locally, parse line + syllable timings
   │
   └─ Apple authorization, match, fetch, or parse failure
@@ -82,8 +89,8 @@ short syllables do not advance in one-second jumps.
 `LyricsPrefetcher` is attached in `AppDelegate` before `PlayerMonitor.start()`.
 It observes the edited selected snapshot, ignores position/state-only updates,
 cancels obsolete work when the selected track changes, and requests lyrics as
-soon as a valid artist/title is available. Therefore the local TTML cache no
-longer depends on opening fullscreen.
+soon as a valid artist/title is available. Therefore local caching no longer
+depends on opening fullscreen.
 
 ## Local lyrics model
 
@@ -237,12 +244,30 @@ local `LyricLine`:
 
 Lines without a first segment are dropped, and the result is sorted by line
 start time. The parsed API still returns only `LyricLine` values, but the
-original `rawTTML` is retained in the local cache.
+original `rawTTML` is now retained in the local cache.
+
+## Tracks Apple only serves to the Music app
+
+Some catalog tracks (much K-pop, e.g. BABYMONSTER "DESERVE", id 6823611520)
+report `hasLyrics`/`hasTimeSyncedLyrics` yet 404 (`40403 No related resources`)
+for the AMPWebPlay token on `syllable-lyrics`, on the Music app's own
+`songs?filter[equivalents]=…&include=syllable-lyrics` form (the relationship is
+simply absent) and on plain `lyrics`. The Music app still gets word-timed TTML
+for them.
+
+After resolving the song ID, `AppleMusicLyricsClient` first asks
+`MusicAppLyricsCache`, which reads the Music app's CFNetwork cache
+(`~/Library/Caches/com.apple.Music/Cache.db`, bodies over the inline limit in
+`fsCachedData/`) for that `include=syllable-lyrics` response and pulls the TTML
+out of `ttmlLocalizations`. Only tracks played in the Music app on this Mac are
+covered, and it depends on that private cache layout; a miss falls through to
+the network requests (`syllableTTML`, then `lineTTML`) and LRCLIB. The
+`ttmlLocalizations` TTML carries translation/transliteration blocks in `<head>`;
+MusanovaKit's parser ignores them (verified: 49/49 lines word-timed).
 
 ## Local TTML cache
 
-Raw TTML is kept on disk so each song costs one trip to the private endpoint per
-machine:
+Raw TTML is stored at:
 
 ```text
 ~/Library/Application Support/Musique/TTML/{artist-title-hash}.ttml
@@ -250,26 +275,22 @@ machine:
 
 `TTMLCacheKey` creates a readable, filesystem-safe prefix and a stable FNV-1a
 hash from normalized artist, title, album, and rounded duration. It does not use
-Swift `hashValue`, because that value changes between launches.
-
-On a memory-cache miss, `AppleMusicLyricsClient` checks the disk cache
-(`TTMLDiskCache`) before going to Apple. After a new Apple fetch it atomically
-writes the file. A failed write is logged and otherwise ignored; the parsed
-lyrics are still returned. `scripts/wipe-user-data.sh` clears the cache along
-with the rest of `~/Library/Application Support/Musique/`.
+Swift `hashValue`, because that value changes between launches. On a
+memory-cache miss `AppleMusicLyricsClient` checks this directory first; a new
+Apple fetch is written there atomically.
 
 ## LRCLIB fallback
 
 `LyricsService.lines` uses `AppleLyricsSourcePolicy` to decide whether the
-current player source can attempt Apple TTML. Every source — `.appleMusic`,
-`.spotify` and `.webScrobbler` — is allowed. A Spotify or browser snapshot
-supplies title, artist, album, and duration to the same Apple catalog matcher;
-no Spotify Web API or Spotify OAuth is required. After an Apple authorization,
-token, catalog-match, privileged-request, or TTML-parsing failure, every source
-falls back to LRCLIB.
+current player source can attempt Apple TTML. Both currently supported sources,
+`.appleMusic` and `.spotify`, are allowed. A Spotify snapshot supplies title,
+artist, album, and duration to the same Apple catalog matcher; no Spotify Web
+API or Spotify OAuth is required. After an Apple authorization, token,
+catalog-match, privileged-request, or TTML-parsing failure, both sources fall
+back to LRCLIB.
 
-Keep the playback source in the cache key even though every source can
-resolve Apple TTML. Music.app, Spotify and the browser may report different album strings,
+Keep the playback source in the cache key even though both sources can now
+resolve Apple TTML. Music.app and Spotify may report different album strings,
 artist credits, durations, or editions for what appears to be the same track.
 
 The LRCLIB sequence is:
@@ -347,7 +368,7 @@ Use `/usr/bin/log`, because `log` is a zsh builtin in this environment:
 
 For a live failure, record all of these before changing matching logic:
 
-- source (`apple_music`, `spotify` or `web_scrobbler`);
+- source (`apple_music` or `spotify`);
 - Music.app title, artist, album, duration, and persistent ID;
 - candidate catalog title, artist, album, duration, `hasLyrics`, and Adam ID;
 - Music authorization status;
@@ -370,8 +391,8 @@ Recorded examples include:
 | Song `1680047366` | 49 lines, 16,905 bytes. |
 | Song `1680047542` | 67 lines, 23,429 bytes. |
 
-The full suite last passed with 23 tests and 0 failures (2026-11-03, isolated
-DerivedData).
+The full suite last passed with 14 tests and 0 failures. After the collaborator
+matcher fix, the focused matcher test also passed independently.
 
 ## Build and test procedure
 
@@ -436,6 +457,119 @@ Manual acceptance test:
    reports `Apple Music TTML fetched`; if matching or authorization fails, the
    UI must still fall back to LRCLIB.
 
+## Loopback lyrics API
+
+The app has an opt-in `DebugServer` built with Network.framework. It is attached
+in `App.swift`, listens on loopback only, and defaults to port 8765. In addition
+to `/api/all`, `/api/snapshot`, `/api/raw`, `/api/pending`, `/api/settings`, and
+`/api/audio`, it exposes parsed synchronized lyrics for the web client.
+
+Implemented endpoint:
+
+```text
+GET /api/lyrics?artist={artist}&track={track}&album={album}&duration={seconds}&source={apple_music|spotify}
+```
+
+The response contains encoded `LyricLine` values and reports whether any line
+has timed segments. Despite the UI label “Apple Music TTML,” this endpoint
+currently returns parsed lyrics rather than the original raw TTML document.
+Inspect `DebugServer.swift` before changing the response contract.
+
+Representative response shape:
+
+```json
+{
+  "track": "Supernova Love",
+  "artist": "IVE",
+  "lines": [
+    {
+      "time": 10.0,
+      "end": 12.0,
+      "text": "example",
+      "segments": [
+        { "text": "exam", "start": 10.0, "end": 11.0 },
+        { "text": "ple", "start": 11.0, "end": 12.0 }
+      ]
+    }
+  ],
+  "hasSegments": true
+}
+```
+
+The route requires non-empty `track` and `artist` parameters, defaults missing
+`album` and `duration` to empty/zero, treats only the literal source value
+`spotify` as Spotify, and otherwise defaults to Apple Music. An upstream miss
+currently returns `200` with an empty `lines` array rather than a typed error.
+
+Raw TTML is cached but is not yet exposed by the loopback server. If a future client needs the XML
+document itself, implement a distinct endpoint such as
+`GET /api/lyrics/ttml/current`; do not silently change `/api/lyrics` from parsed
+JSON to XML. The remaining raw-TTML implementation outline is:
+
+1. Introduce a richer Apple result instead of returning only `[LyricLine]`, for
+   example `AppleLyricsResult { songID, storefront, rawTTML, lines, fetchedAt }`.
+2. Make `AppleMusicLyricsClient` return/cache that result. Keep the parsed-lines
+   API in `LyricsService` so existing UI call sites do not change unnecessarily.
+3. Add a `LyricsService` method dedicated to Apple raw TTML. It must not return
+   LRCLIB LRC/YAML and label it TTML.
+4. Cache by stable current-track identity. Prefer
+   `{source}|{persistentID}` when called from `DebugServer`; retain a metadata
+   fallback for catalog tracks whose persistent ID is blank. `refresh=1` should
+   bypass both successful and empty-result caches.
+5. Add an async route in `DebugServer.handle`. Follow the existing `/api/lyrics`
+   task pattern and await the lyrics actor without blocking the listener queue.
+6. Return typed failure information instead of collapsing every problem to an
+   empty array. Suggested cases are `noCurrentTrack`,
+   `musicAuthorizationDenied`, `developerTokenUnavailable`, `catalogNoMatch`,
+   `lyricsUnavailable`, and `upstreamFailure`.
+7. Add unit tests for response serialization and cache bypass, plus a route test
+   if the server is factored enough to test without opening a real listener.
+8. Keep the existing web dashboard's parsed-lyrics consumer on `/api/lyrics`.
+
+Suggested HTTP behavior:
+
+| Condition | Status |
+| --- | --- |
+| Apple Music track + TTML available | `200` JSON response |
+| No current track | `409` with machine-readable error |
+| Music authorization denied/restricted | `403` |
+| Correct track found but no TTML resource | `404` |
+| Apple token/catalog/private endpoint temporarily fails | `502` |
+
+The endpoint should return a JSON error body consistently, for example:
+
+```json
+{
+  "error": {
+    "code": "catalogNoMatch",
+    "message": "No Apple Music catalog song matched the current track"
+  }
+}
+```
+
+### API security requirements
+
+The listener must remain restricted to `127.0.0.1`; do not expose it on LAN or
+all interfaces. Never include the AMPWebPlay developer token, Music User Token,
+cookies, or request authorization headers in any response or log.
+
+There is an additional browser-origin concern: the current shared `send()`
+helper sets `Access-Control-Allow-Origin: *` for every response. Loopback alone
+does not stop an arbitrary website opened in the user's browser from requesting
+and reading a local endpoint when permissive CORS is present. Before returning
+lyrics, either:
+
+- remove wildcard CORS globally if nothing depends on it;
+- make CORS route-specific and omit it for `/api/lyrics/...`; or
+- require a locally stored bearer secret and restrict allowed origins.
+
+The simplest safe default for a developer-only TTML endpoint is loopback-only,
+GET-only, and no CORS header on lyrics responses. Confirm whether the dashboard
+is served from the same origin—it currently is—so it does not require CORS.
+
+Raw lyrics may also be subject to licensing/copyright constraints. Treat this
+as a personal, local debugging/export feature, not a public redistribution API.
+
 ## Known fragility and follow-up improvements
 
 - The Apple endpoint and MusanovaKit behavior are undocumented and may break.
@@ -465,15 +599,17 @@ Manual acceptance test:
 Before making further changes:
 
 1. Read `CLAUDE.md` and this file completely.
-2. Confirm MusanovaKit still resolves to 4.0.0 after `xcodegen generate`.
-3. Inspect `LyricsService.swift`, `AnimationFullscreenView.swift`, and the
-   TTML-related tests.
-4. Do not remove the LRCLIB fallback.
-5. If another component (e.g. a debug endpoint) needs lyrics, reuse the
-   `LyricsService` actor; do not duplicate the Apple request.
-6. Never expose or log the AMPWebPlay token, Music User Token, cookies, or
-   request authorization headers.
-7. Regenerate the project after `project.yml` changes.
-8. Test in isolated DerivedData, then do a signed Xcode Run for the live private
+2. Run `git status --short` and preserve all existing uncommitted work; the
+   TTML changes currently overlap the web/dashboard work.
+3. Confirm `Package.resolved` still pins MusanovaKit 4.0.0.
+4. Inspect `LyricsService.swift`, `AnimationFullscreenView.swift`,
+   `DebugServer.swift`, `web/index.html`, and the three TTML-related tests.
+5. Do not remove LRCLIB fallback while implementing raw TTML access.
+6. Do not duplicate the Apple request in `DebugServer`; refactor and reuse the
+   lyrics actor.
+7. Do not expose credentials, weaken loopback binding, or inherit wildcard CORS
+   for a future raw-TTML response.
+8. Regenerate the project after `project.yml` changes.
+9. Test in isolated DerivedData, then do a signed Xcode Run for the live private
    request.
-9. Update this document when behavior changes.
+10. Update this document's status and endpoint contract when the API lands.
