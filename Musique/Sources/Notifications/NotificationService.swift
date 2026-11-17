@@ -6,8 +6,8 @@ import AppKit
 @MainActor
 final class NotificationService: NSObject, ObservableObject {
     static let shared = NotificationService()
-    /// A notification carrying this in `userInfo` opens that URL when clicked.
-    nonisolated static let openURLKey = "open_url"
+    /// A notification carrying this in `userInfo` offers to install the update when clicked.
+    nonisolated static let offerUpdateKey = "offer_update"
 
     private let settings = SettingsStore.shared
     private weak var monitor: PlayerMonitor?
@@ -190,9 +190,8 @@ extension NotificationService: UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
-        if let s = response.notification.request.content.userInfo[Self.openURLKey] as? String,
-           let url = URL(string: s) {
-            DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+        if response.notification.request.content.userInfo[Self.offerUpdateKey] != nil {
+            Task { @MainActor in UpdateService.shared.offerAvailable() }
         }
         completionHandler()
     }

@@ -154,8 +154,8 @@ final class MenuBarController {
 
         let update: NSMenuItem
         if let release = UpdateService.shared.available {
-            update = NSMenuItem(title: L10n.tr("ดาวน์โหลด Musique \(release.version)…",
-                                               "Download Musique \(release.version)…"),
+            update = NSMenuItem(title: L10n.tr("ติดตั้ง Musique \(release.version)…",
+                                               "Install Musique \(release.version)…"),
                                 action: #selector(openUpdateAction), keyEquivalent: "")
         } else {
             update = NSMenuItem(title: L10n.tr("ตรวจสอบอัปเดต…", "Check for Updates…"),
@@ -267,7 +267,7 @@ final class MenuBarController {
     }
 
     @objc private func openUpdateAction() {
-        UpdateService.shared.openReleasePage()
+        UpdateService.shared.offerAvailable()
     }
 
     @objc private func openSettingsAction() {
