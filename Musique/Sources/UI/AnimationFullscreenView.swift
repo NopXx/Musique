@@ -421,9 +421,15 @@ private struct LyricsColumn: View, Equatable {
     private func line(_ l: LyricLine, distance: Int) -> some View {
         Group {
             if distance == 0, !l.segments.isEmpty {
-                TimelineView(.animation(minimumInterval: tickInterval, paused: !playback.isPlaying)) { context in
-                    KaraokeLyricText(line: l, position: playback.livePosition(at: context.date))
-                }
+                // The wipe rebuilds its Text every frame; as a plain child that
+                // re-measured the line and, through the VStack, the whole scroll
+                // column. A hidden copy holds the layout and the wipe draws as an
+                // overlay, whose size never feeds back up.
+                Text(l.text.isEmpty ? " " : l.text)
+                    .hidden()
+                    .overlay(alignment: .topLeading) {
+                        KaraokeLyricText(line: l, playback: playback, tickInterval: tickInterval)
+                    }
             } else {
                 Text(l.text.isEmpty ? " " : l.text)
                     .foregroundStyle(.white.opacity(distance == 0 ? 1 : distance <= 2 ? 0.34 : 0.22))
@@ -445,19 +451,27 @@ private struct LyricsColumn: View, Equatable {
 /// brightening at once. `position` arrives already projected to the frame.
 private struct KaraokeLyricText: View {
     let line: LyricLine
-    let position: Double
+    let playback: NowPlayingSnapshot
+    let tickInterval: Double
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        highlightedText(at: position)
-            .textRenderer(SungWordRenderer(lift: reduceMotion ? 0 : 1.5))
+        // Built once per line, outside the timeline: only the renderer's
+        // position changes per frame, so SwiftUI redraws the runs without
+        // resolving and measuring the Text again (which it did for every frame
+        // while the progress lived in the Text's attributes).
+        let text = Self.text(for: line)
+        let lift: CGFloat = reduceMotion ? 0 : 1.5
+        TimelineView(.animation(minimumInterval: tickInterval, paused: !playback.isPlaying)) { context in
+            text.textRenderer(SungWordRenderer(position: playback.livePosition(at: context.date), lift: lift))
+        }
     }
 
     /// Builds one wrapping SwiftUI Text while retaining the literal whitespace in
     /// the complete TTML line. MusanovaKit's segment text omits those separators,
     /// so each segment is located sequentially inside the original line.
-    private func highlightedText(at playbackPosition: Double) -> Text {
+    private static func text(for line: LyricLine) -> Text {
         let content = line.text.isEmpty ? " " : line.text
         guard !line.segments.isEmpty else { return Text(content).foregroundColor(.white) }
 
@@ -469,45 +483,50 @@ private struct KaraokeLyricText: View {
             guard cursor < content.endIndex,
                   let range = content.range(of: segment.text,
                                             range: cursor..<content.endIndex) else { continue }
-            let sung = Self.progress(of: segment, at: playbackPosition)
+            let timing = SungTiming(start: segment.start, end: segment.end)
             if cursor < range.lowerBound {
-                result = result + styled(String(content[cursor..<range.lowerBound]), sung: sung)
+                result = result + styled(String(content[cursor..<range.lowerBound]), timing)
             }
-            result = result + styled(String(content[range]), sung: sung,
-                                     held: segment.end - segment.start >= Self.heldNote)
+            var syllable = timing
+            syllable.held = segment.end - segment.start >= heldNote
+            result = result + styled(String(content[range]), syllable)
             cursor = range.upperBound
             matchedAny = true
         }
 
         guard matchedAny else { return Text(content).foregroundColor(.white) }
         if cursor < content.endIndex {
-            let sung = line.segments.last.map { Self.progress(of: $0, at: playbackPosition) } ?? 1
-            result = result + styled(String(content[cursor...]), sung: sung)
+            // The tail follows the last syllable (segments is non-empty here).
+            let timing = line.segments.last.map { SungTiming(start: $0.start, end: $0.end) }
+                ?? SungTiming(start: 0, end: 0)
+            result = result + styled(String(content[cursor...]), timing)
         }
         return result
     }
 
-    private func styled(_ text: String, sung: Double, held: Bool = false) -> Text {
+    private static func styled(_ text: String, _ timing: SungTiming) -> Text {
         Text(text)
             .foregroundColor(.white)
-            .customAttribute(SungProgress(value: sung, held: held))
+            .customAttribute(timing)
     }
 
     /// A syllable sung at least this long is a held note and gets the wave.
     private static let heldNote = 1.0
+}
+
+/// When a run of the sung line is sung. The renderer turns it into progress
+/// against the frame's position, so the Text itself never changes per frame.
+private struct SungTiming: TextAttribute {
+    var start: Double
+    var end: Double
+    /// A held note: drawn letter by letter, rising as the colour reaches each.
+    var held = false
 
     /// 0 before the syllable, 1 once it's sung, linear in between — the wipe
     /// should track the voice, not ease around it.
-    private static func progress(of segment: TimedLyricSegment, at position: Double) -> Double {
-        min(max((position - segment.start) / max(segment.end - segment.start, 0.01), 0), 1)
+    func progress(at position: Double) -> Double {
+        min(max((position - start) / max(end - start, 0.01), 0), 1)
     }
-}
-
-/// How far through its syllable a run of the sung line is (0…1).
-private struct SungProgress: TextAttribute {
-    var value: Double
-    /// A held note: drawn letter by letter, rising as the colour reaches each.
-    var held = false
 }
 
 /// Draws the sung line: each run grey underneath, white on top masked by a
@@ -516,6 +535,8 @@ private struct SungProgress: TextAttribute {
 /// stays up. A renderer because the line is one `Text` built from many pieces;
 /// nothing else can paint part of one word.
 private struct SungWordRenderer: TextRenderer {
+    /// Playback position for this frame, projected.
+    var position: Double
     var lift: CGFloat
     /// Grey of the not-yet-sung part of the sung line — brighter than the lines
     /// around it, so the line still reads as the current one before it's sung.
@@ -524,12 +545,13 @@ private struct SungWordRenderer: TextRenderer {
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         for line in layout {
             for run in line {
-                guard let sung = run[SungProgress.self]?.value else {
+                guard let timing = run[SungTiming.self] else {
                     context.draw(run)
                     continue
                 }
+                let sung = timing.progress(at: position)
                 let rise = lift * sung * sung * (3 - 2 * sung)
-                if let attr = run[SungProgress.self], attr.held, sung > 0, sung < 1, lift > 0 {
+                if timing.held, sung > 0, sung < 1, lift > 0 {
                     drawHeld(run, sung: sung, baseRise: rise, in: context)
                     continue
                 }
@@ -537,7 +559,7 @@ private struct SungWordRenderer: TextRenderer {
                 ctx.translateBy(x: 0, y: -rise)
                 // A held note that's done keeps the pose its wave ended on, rather
                 // than dropping back the moment the next syllable starts.
-                if let attr = run[SungProgress.self], attr.held, sung >= 1, lift > 0 {
+                if timing.held, sung >= 1, lift > 0 {
                     let box = run.typographicBounds.rect
                     ctx.translateBy(x: box.midX, y: box.midY - 3)
                     ctx.scaleBy(x: 1.06, y: 1.06)
