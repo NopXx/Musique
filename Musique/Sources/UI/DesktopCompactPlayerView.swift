@@ -214,7 +214,7 @@ struct DesktopCompactPlayerView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .contentShape(Rectangle())
             .onTapGesture { artworkShown = false }
 
@@ -234,6 +234,8 @@ struct DesktopCompactPlayerView: View {
                 .transition(.opacity)
             }
         }
+        // Inset from the bar's edge, so the cover reads as a card in the glass.
+        .padding(12)
         .onHover { inside in
             withAnimation(.easeOut(duration: 0.15)) { hoveringArtwork = inside }
         }
