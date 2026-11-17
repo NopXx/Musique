@@ -421,7 +421,13 @@ private struct LyricsColumn: View, Equatable {
             }
             .scrollDisabled(true)
             .scrollIndicators(.hidden)
-            .onChange(of: target, initial: true) { _, n in
+            .onChange(of: target, initial: true) { old, n in
+                // The first placement lands at once: springing there from the top
+                // made a column bounce in every time lyrics opened.
+                guard old != n else {
+                    proxy.scrollTo(n, anchor: UnitPoint(x: 0, y: anchor))
+                    return
+                }
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                     proxy.scrollTo(n, anchor: UnitPoint(x: 0, y: anchor))
                 }
@@ -431,6 +437,40 @@ private struct LyricsColumn: View, Equatable {
 
     @ViewBuilder
     private func line(_ l: LyricLine, distance: Int) -> some View {
+        // Backing vocals sit on a smaller row under their line, as in Apple
+        // Music: always there, wiped on their own clock while the line is sung.
+        VStack(alignment: .leading, spacing: fontSize * 0.15) {
+            mainLine(l, distance: distance)
+            if l.background.isEmpty {
+                EmptyView()
+            } else if distance == 0 {
+                let bg = LyricLine(time: l.time, text: l.backgroundText, segments: l.background)
+                // Same hidden-copy-plus-overlay as the sung line, for the same reason.
+                Text(bg.text)
+                    .hidden()
+                    .overlay(alignment: .topLeading) {
+                        KaraokeLyricText(line: bg, playback: playback, tickInterval: tickInterval)
+                    }
+                    .font(.system(size: fontSize * 0.62, weight: .semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(bg.text)
+            } else {
+                Text(l.backgroundText)
+                    .font(.system(size: fontSize * 0.62, weight: .semibold))
+                    .foregroundStyle(.white.opacity(distance <= 2 ? 0.3 : 0.2))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        // The background can be any brightness, and a shadow is cheaper than a
+        // scrim. Per line, not on the column: on the scroll view it cast the
+        // shadow of a box, which showed as grey blocks on a light cover.
+        .shadow(color: .black.opacity(0.45), radius: fontSize * 0.35, x: 0, y: 1)
+    }
+
+    @ViewBuilder
+    private func mainLine(_ l: LyricLine, distance: Int) -> some View {
         Group {
             if distance == 0, !l.segments.isEmpty {
                 // The wipe rebuilds its Text every frame; as a plain child that
@@ -451,10 +491,6 @@ private struct LyricsColumn: View, Equatable {
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel(l.text)
-            // The background can be any brightness, and a shadow is cheaper than a
-            // scrim. Per line, not on the column: on the scroll view it cast the
-            // shadow of a box, which showed as grey blocks on a light cover.
-            .shadow(color: .black.opacity(0.45), radius: fontSize * 0.35, x: 0, y: 1)
     }
 }
 
@@ -487,30 +523,51 @@ private struct KaraokeLyricText: View {
         let content = line.text.isEmpty ? " " : line.text
         guard !line.segments.isEmpty else { return Text(content).foregroundColor(.white) }
 
-        var result = Text("")
+        // Locate every segment first and number the words: a segment starts a
+        // new word when whitespace separates it from the one before. TTML splits
+        // words into syllables ("a" + "gain"), and a held note swells its whole
+        // word, so each syllable needs to know its word and the word's held note.
+        var placed: [(segment: TimedLyricSegment, range: Range<String.Index>, gap: Range<String.Index>, word: Int)] = []
         var cursor = content.startIndex
-        var matchedAny = false
-
+        var word = -1
         for segment in line.segments {
             guard cursor < content.endIndex,
                   let range = content.range(of: segment.text,
                                             range: cursor..<content.endIndex) else { continue }
-            let timing = SungTiming(start: segment.start, end: segment.end)
-            if cursor < range.lowerBound {
-                result = result + styled(String(content[cursor..<range.lowerBound]), timing)
-            }
-            var syllable = timing
-            syllable.held = segment.end - segment.start >= heldNote
-            result = result + styled(String(content[range]), syllable)
+            let gap = cursor..<range.lowerBound
+            if placed.isEmpty || content[gap].contains(where: \.isWhitespace) { word += 1 }
+            placed.append((segment, range, gap, word))
             cursor = range.upperBound
-            matchedAny = true
+        }
+        guard !placed.isEmpty else { return Text(content).foregroundColor(.white) }
+
+        // Each word's held stretch: from its first held syllable to its last, so a
+        // note carried over two syllables ("For" 2 s + "e" 1.1 s) swells once.
+        var heldByWord: [Int: (start: Double, end: Double)] = [:]
+        for p in placed where p.segment.end - p.segment.start >= heldNote {
+            let s = p.segment
+            heldByWord[p.word] = heldByWord[p.word].map { (min($0.start, s.start), max($0.end, s.end)) }
+                ?? (s.start, s.end)
         }
 
-        guard matchedAny else { return Text(content).foregroundColor(.white) }
+        var result = Text("")
+        for p in placed {
+            if !p.gap.isEmpty {
+                // Separators take the next syllable's clock but belong to no word.
+                result = result + styled(String(content[p.gap]),
+                                         SungTiming(start: p.segment.start, end: p.segment.end))
+            }
+            var timing = SungTiming(start: p.segment.start, end: p.segment.end, word: p.word)
+            if let held = heldByWord[p.word] {
+                timing.heldStart = held.start
+                timing.heldEnd = held.end
+            }
+            result = result + styled(String(content[p.range]), timing)
+        }
         if cursor < content.endIndex {
-            // The tail follows the last syllable (segments is non-empty here).
-            let timing = line.segments.last.map { SungTiming(start: $0.start, end: $0.end) }
-                ?? SungTiming(start: 0, end: 0)
+            // The tail follows the last syllable.
+            let last = placed[placed.count - 1].segment
+            let timing = SungTiming(start: last.start, end: last.end)
             result = result + styled(String(content[cursor...]), timing)
         }
         return result
@@ -531,8 +588,12 @@ private struct KaraokeLyricText: View {
 private struct SungTiming: TextAttribute {
     var start: Double
     var end: Double
-    /// A held note: drawn letter by letter, rising as the colour reaches each.
-    var held = false
+    /// Which word of the line the run belongs to; -1 for separators.
+    var word = -1
+    /// The held note in this run's word, if it has one: the whole word swells
+    /// while it's sung, every syllable of it, not just the long one.
+    var heldStart: Double?
+    var heldEnd: Double?
 
     /// 0 before the syllable, 1 once it's sung, linear in between — the wipe
     /// should track the voice, not ease around it.
@@ -556,6 +617,14 @@ private struct SungWordRenderer: TextRenderer {
 
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         for line in layout {
+            // Words with a held note swell as one, so they need their whole box —
+            // a word split into syllables is several runs.
+            var wordBoxes: [Int: CGRect] = [:]
+            for run in line {
+                guard let t = run[SungTiming.self], t.heldStart != nil else { continue }
+                let r = run.typographicBounds.rect
+                wordBoxes[t.word] = wordBoxes[t.word].map { $0.union(r) } ?? r
+            }
             for run in line {
                 guard let timing = run[SungTiming.self] else {
                     context.draw(run)
@@ -563,20 +632,16 @@ private struct SungWordRenderer: TextRenderer {
                 }
                 let sung = timing.progress(at: position)
                 let rise = lift * sung * sung * (3 - 2 * sung)
-                if timing.held, sung > 0, sung < 1, lift > 0 {
-                    drawHeld(run, sung: sung, baseRise: rise, in: context)
+                // A word with a held note swells while it's sung and for a beat
+                // after, then settles into the plain path below, which is where
+                // the swell lands.
+                if lift > 0, let wordBox = wordBoxes[timing.word],
+                   Self.heldSwell(timing, at: position) > 0 {
+                    drawHeld(run, timing: timing, sung: sung, wordBox: wordBox, in: context)
                     continue
                 }
                 var ctx = context
                 ctx.translateBy(x: 0, y: -rise)
-                // A held note that's done keeps the pose its wave ended on, rather
-                // than dropping back the moment the next syllable starts.
-                if timing.held, sung >= 1, lift > 0 {
-                    let box = run.typographicBounds.rect
-                    ctx.translateBy(x: box.midX, y: box.midY - 3)
-                    ctx.scaleBy(x: 1.06, y: 1.06)
-                    ctx.translateBy(x: -box.midX, y: -box.midY)
-                }
 
                 var grey = ctx
                 grey.opacity = unsung
@@ -611,33 +676,62 @@ private struct SungWordRenderer: TextRenderer {
         }
     }
 
-    /// A held note while it's being sung: a glow that builds over the note, and
-    /// the letters lit one by one, each rising a few points (and the word swelling
-    /// a touch) as the colour reaches it — Apple Music's long-vowel wave. Letter
-    /// by letter because a run only moves as a whole.
-    private func drawHeld(_ run: Text.Layout.Run, sung: Double, baseRise: CGFloat,
-                          in context: GraphicsContext) {
-        let swell = sin(min(1, sung * 1.2) * .pi / 2)
+    /// How far into its swell a held note is (0…1): up over the first 0.6 s of
+    /// the note, held while it's sung, back down over 0.5 s once it ends.
+    static func heldSwell(_ timing: SungTiming, at position: Double) -> CGFloat {
+        guard let start = timing.heldStart, let end = timing.heldEnd else { return 0 }
+        let into = position - start
+        guard into > 0 else { return 0 }
+        let x = position < end ? into / 0.6 : 1 - (position - end) / 0.5
+        let t = min(max(x, 0), 1)
+        return CGFloat(t * t * (3 - 2 * t))
+    }
 
-        var glow = context
-        glow.translateBy(x: 0, y: -baseRise)
-        glow.opacity = 0.5 * swell
-        glow.addFilter(.blur(radius: 6 + 6 * swell))
+    /// A held note, the way Apple Music draws one (taken off a frame-by-frame
+    /// capture of a long "again"): the colour sweeps through the letters at the
+    /// voice's pace for the whole note; the *word* swells ~8% and stays swollen
+    /// while it's held; letters already lit sit higher than the ones still to
+    /// come; a glow blooms behind the lit part. When the note ends it all eases
+    /// back to an ordinary sung word. Letter by letter, as a run only moves whole.
+    private func drawHeld(_ run: Text.Layout.Run, timing: SungTiming, sung: Double,
+                          wordBox: CGRect, in context: GraphicsContext) {
+        let swell = Self.heldSwell(timing, at: position)
+        let box = run.typographicBounds.rect
+        // The whole word grows about its centre, near the baseline — the same
+        // anchor for each of its syllables, so they swell as one.
+        var word = context
+        let anchor = CGPoint(x: wordBox.midX, y: wordBox.minY + wordBox.height * 0.85)
+        word.translateBy(x: anchor.x, y: anchor.y)
+        word.scaleBy(x: 1 + 0.08 * swell, y: 1 + 0.08 * swell)
+        word.translateBy(x: -anchor.x, y: -anchor.y)
+
+        // One glow pass for the lit part (a blur per letter is a pass each).
+        var glow = word
+        glow.translateBy(x: 0, y: -(lift + 3.5 * swell))
+        glow.opacity = 0.85 * Double(swell)
+        glow.addFilter(.blur(radius: 8 + 8 * swell))
+        if sung < 1 {
+            let feather = min(0.5, 8 / max(box.width, 1))
+            let edge = sung * (1 + feather)
+            glow.clipToLayer { layer in
+                layer.fill(Path(box), with: .linearGradient(
+                    Gradient(stops: [.init(color: .white, location: max(0, edge - feather)),
+                                     .init(color: .clear, location: min(1, edge))]),
+                    startPoint: CGPoint(x: box.minX, y: box.midY),
+                    endPoint: CGPoint(x: box.maxX, y: box.midY)))
+            }
+        }
         glow.draw(run)
 
         let slices = Array(run)
         let count = Double(slices.count)
-        let scale = 1 + 0.06 * swell
         for (i, slice) in slices.enumerated() {
             let reached = sung * count - Double(i)
             let lit = min(max(reached + 0.5, 0), 1)
-            let t = min(max(reached, 0), 1)
-            let rise = baseRise + 3 * CGFloat(t * t * (3 - 2 * t))
-            let box = slice.typographicBounds.rect
-            var ctx = context
-            ctx.translateBy(x: box.midX, y: box.midY - rise)
-            ctx.scaleBy(x: scale, y: scale)
-            ctx.translateBy(x: -box.midX, y: -box.midY)
+            // Lit letters ride up with the swell; ones to come wait lower.
+            let up = CGFloat(min(max(reached + 0.3, 0), 1))
+            var ctx = word
+            ctx.translateBy(x: 0, y: -(lift + 3.5 * swell) * up)
 
             var grey = ctx
             grey.opacity = unsung

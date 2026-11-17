@@ -25,6 +25,9 @@ struct LyricLine: Equatable, Encodable {
     var end: Double? = nil
     let text: String
     var segments: [TimedLyricSegment] = []
+    /// Backing vocals (TTML `x-bg`), shown on a smaller row under the line.
+    var background: [TimedLyricSegment] = []
+    var backgroundText = ""
 }
 
 enum AppleMusicMetadataMatcher {
@@ -469,7 +472,8 @@ private actor AppleMusicLyricsClient {
     }
 
     private func parsedLines(from ttml: String) -> [LyricLine] {
-        LyricsParser().parse(ttml)
+        let background = BackgroundVocals.keys(in: ttml)
+        return LyricsParser().parse(ttml)
             .flatMap(\.lines)
             .compactMap { line in
                 guard let first = line.segments.first else { return nil }
@@ -478,10 +482,11 @@ private actor AppleMusicLyricsClient {
                                       start: $0.startTime,
                                       end: $0.endTime)
                 }
-                return LyricLine(time: first.startTime,
-                                 end: line.segments.last?.endTime,
-                                 text: line.text,
-                                 segments: segments)
+                return BackgroundVocals.split(LyricLine(time: first.startTime,
+                                                        end: line.segments.last?.endTime,
+                                                        text: line.text,
+                                                        segments: segments),
+                                             keys: background)
             }
             .sorted { $0.time < $1.time }
     }
