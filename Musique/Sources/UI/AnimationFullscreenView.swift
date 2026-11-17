@@ -377,7 +377,7 @@ struct FullscreenLyricsView: View {
     private var displayed: [LyricLine] {
         var out: [LyricLine] = []
         if let first = lines.first, first.time > gap {
-            out.append(LyricLine(time: 0, end: first.time, text: dots))
+            out.append(LyricLine(time: 0, end: first.time, text: Self.dots))
         }
         for (i, l) in lines.enumerated() {
             out.append(l)
@@ -386,14 +386,14 @@ struct FullscreenLyricsView: View {
             // slow line as an instrumental — no marker rather than a wrong one.
             guard let end = l.end, i + 1 < lines.count,
                   lines[i + 1].time - end > gap else { continue }
-            out.append(LyricLine(time: end, end: lines[i + 1].time, text: dots))
+            out.append(LyricLine(time: end, end: lines[i + 1].time, text: Self.dots))
         }
         return out
     }
 
     /// Long enough that the pause is deliberate rather than a singer drawing breath.
     private let gap = 5.0
-    private let dots = "• • •"
+    static let dots = "• • •"
 }
 
 /// `FullscreenLyricsView`'s scrolling column, re-rendered only when the sung
@@ -500,7 +500,14 @@ private struct LyricsColumn: View, Equatable {
     @ViewBuilder
     private func mainLine(_ l: LyricLine, distance: Int, sung: Bool) -> some View {
         Group {
-            if sung, !l.segments.isEmpty {
+            if sung, l.segments.isEmpty, l.text == FullscreenLyricsView.dots {
+                Text(l.text)
+                    .hidden()
+                    .overlay(alignment: .leading) {
+                        InterludeDots(line: l, playback: playback, tickInterval: tickInterval,
+                                      size: fontSize)
+                    }
+            } else if sung, !l.segments.isEmpty {
                 // The wipe rebuilds its Text every frame; as a plain child that
                 // re-measured the line and, through the VStack, the whole scroll
                 // column. A hidden copy holds the layout and the wipe draws as an
@@ -519,6 +526,38 @@ private struct LyricsColumn: View, Equatable {
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel(l.text)
+    }
+}
+
+/// The gap marker while nobody sings, as in Apple Music: three dots that
+/// light one by one across the gap, breathe while they wait, and shrink
+/// away just before the next line comes in.
+private struct InterludeDots: View {
+    let line: LyricLine
+    let playback: NowPlayingSnapshot
+    let tickInterval: Double
+    let size: CGFloat
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: tickInterval, paused: !playback.isPlaying)) { context in
+            let position = playback.livePosition(at: context.date)
+            let end = line.end ?? line.time + 1
+            let progress = min(max((position - line.time) / max(end - line.time, 0.01), 0), 1)
+            let exit = min(max((end - position) / 0.45, 0), 1)
+            let breathe = reduceMotion ? 1 : 1 + 0.08 * sin(position * .pi * 2 / 2.4)
+            HStack(spacing: size * 0.3) {
+                ForEach(0..<3, id: \.self) { i in
+                    let lit = min(max(progress * 3 - Double(i), 0), 1)
+                    Circle()
+                        .fill(.white.opacity(0.3 + 0.7 * lit))
+                        .frame(width: size * 0.38, height: size * 0.38)
+                }
+            }
+            .scaleEffect(breathe * exit * exit, anchor: .leading)
+            .opacity(exit)
+        }
     }
 }
 
