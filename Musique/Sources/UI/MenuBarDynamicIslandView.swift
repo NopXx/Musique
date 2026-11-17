@@ -6,8 +6,10 @@ final class MenuBarDynamicIslandModel: ObservableObject {
     @Published var snapshot: NowPlayingSnapshot?
     @Published var artwork: NSImage?
     @Published var accent: NSColor?
-    /// The wave bars, at the monitor's own 30 Hz. Cheap now the pill is an
-    /// AppKit-drawn image (see `MenuBarIslandRenderer`).
+    /// The wave bars, at 20 Hz (the monitor runs 30) and only when a bar would
+    /// actually move: every change costs AppKit a re-snapshot of the status item
+    /// per display, whether or not a pixel differs. That snapshot is AppKit's
+    /// cost, not ours, so the rate is the only lever left on it.
     @Published var bands: [Float] = []
 
     private let monitor: PlayerMonitor
@@ -30,6 +32,9 @@ final class MenuBarDynamicIslandModel: ObservableObject {
             .store(in: &cancellables)
 
         MusicAudioLevelMonitor.shared.$bands
+            .map(MenuBarIslandRenderer.quantized)
+            .removeDuplicates()
+            .throttle(for: .milliseconds(50), scheduler: DispatchQueue.main, latest: true)
             .sink { [weak self] in self?.bands = $0 }
             .store(in: &cancellables)
 
@@ -147,6 +152,16 @@ enum MenuBarIslandRenderer {
     private static let gap: CGFloat = 14
     private static let art: CGFloat = 18
     private static let barCount = 7
+    /// How far a bar grows at full level, in points.
+    private static let barTravel: CGFloat = 7.5
+
+    /// The levels the bars can show: the drawn ones only, snapped to half-point
+    /// steps of bar height (a pixel on Retina). Ticks that round to the same
+    /// bars are dropped before they reach the status item.
+    nonisolated static func quantized(_ bands: [Float]) -> [Float] {
+        let steps = Float(barTravel * 2)
+        return bands.prefix(barCount).map { (min(1, max(0, $0)) * steps).rounded() / steps }
+    }
     private static let barW: CGFloat = 2
     private static let barGap: CGFloat = 1.5
     private static var wavesW: CGFloat { CGFloat(barCount) * barW + CGFloat(barCount - 1) * barGap }
@@ -276,7 +291,7 @@ enum MenuBarIslandRenderer {
         var x = originX
         for i in 0..<barCount {
             var h: CGFloat = 2.5
-            if playing, i < bands.count { h += CGFloat(min(1, max(0, bands[i]))) * 7.5 }
+            if playing, i < bands.count { h += CGFloat(min(1, max(0, bands[i]))) * barTravel }
             NSBezierPath(roundedRect: NSRect(x: x, y: (height - h) / 2, width: barW, height: h),
                          xRadius: barW / 2, yRadius: barW / 2).fill()
             x += barW + barGap
