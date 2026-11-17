@@ -20,6 +20,10 @@ struct DesktopPlayerView: View {
     /// the window shrinks) — an animated window resize made the card jump.
     @State private var expanded = false
     @State private var panelOnLeft = false
+    /// Controls show only under the pointer; at rest the card is cover + title.
+    @State private var hovering = false
+    @State private var controlsHeight: CGFloat = 0
+    private static let hoverMove = Animation.spring(response: 0.45, dampingFraction: 0.86)
 
     static let size: CGFloat = 340
     /// The lyrics panel beside the card.
@@ -40,6 +44,9 @@ struct DesktopPlayerView: View {
                 content
             }
             .frame(width: Self.size, height: Self.size)
+            .onHover { inside in
+                withAnimation(Self.hoverMove) { hovering = inside }
+            }
             if !panelOnLeft { lyricsPanel }
         }
         .frame(width: Self.size + (expanded ? Self.lyricsWidth : 0), height: Self.size,
@@ -108,6 +115,8 @@ struct DesktopPlayerView: View {
         LinearGradient(colors: [.clear, shade.opacity(0.75), shade],
                        startPoint: .top, endPoint: .bottom)
             .frame(height: Self.size * 0.55)
+            // Scale, not height: a changing frame relaid the card out every frame.
+            .scaleEffect(x: 1, y: hovering ? 1 : 0.64, anchor: .bottom)
             .allowsHitTesting(false)
     }
 
@@ -155,29 +164,38 @@ struct DesktopPlayerView: View {
                             color: .white.opacity(0.6))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // At rest the title sits where the controls would be. A transform, not
+            // a relayout: inserting/removing the row made the title jump.
+            .offset(y: hovering ? 0 : controlsHeight)
 
-            if let snap, hasTrack {
-                Label(snap.source.displayName, systemImage: snap.source.sfSymbol)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.75))
-                    .padding(.top, 10)
-            }
-
-            HStack {
-                sideButton(icon: viewModel.desktopLyricsEnabled ? "quote.bubble.fill" : "quote.bubble",
-                           active: viewModel.desktopLyricsEnabled, action: viewModel.toggleDesktopLyrics)
-                    .disabled(!hasTrack)
-                Spacer()
-                transport
-                Spacer()
-                // Back to the glass bar — the card's way down, as the bar's cover
-                // is its way up.
-                sideButton(icon: "rectangle.compress.vertical", active: false) {
-                    SettingsStore.shared.merge(["miniplayer": ["desktop_style": "compact"]])
+            VStack(spacing: 0) {
+                if let snap, hasTrack {
+                    Label(snap.source.displayName, systemImage: snap.source.sfSymbol)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .padding(.top, 10)
                 }
-                .help(L10n.tr("ย่อเป็นแถบกระจก", "Shrink to glass bar"))
+
+                HStack {
+                    sideButton(icon: viewModel.desktopLyricsEnabled ? "quote.bubble.fill" : "quote.bubble",
+                               active: viewModel.desktopLyricsEnabled, action: viewModel.toggleDesktopLyrics)
+                        .disabled(!hasTrack)
+                    Spacer()
+                    transport
+                    Spacer()
+                    // Back to the glass bar — the card's way down, as the bar's cover
+                    // is its way up.
+                    sideButton(icon: "rectangle.compress.vertical", active: false) {
+                        SettingsStore.shared.merge(["miniplayer": ["desktop_style": "compact"]])
+                    }
+                    .help(L10n.tr("ย่อเป็นแถบกระจก", "Shrink to glass bar"))
+                }
+                .padding(.top, 14)
             }
-            .padding(.top, 14)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlsHeight = $0 }
+            .opacity(hovering ? 1 : 0)
+            .offset(y: hovering ? 0 : 16)
+            .allowsHitTesting(hovering)
         }
         .padding(.horizontal, 22)
         .padding(.bottom, 20)

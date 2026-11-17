@@ -85,7 +85,7 @@ enum MusicAppController {
 }
 
 private func isAppRunning(_ bundleID: String) -> Bool {
-    NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == bundleID }
+    !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
 }
 
 final class AppleMusicController {

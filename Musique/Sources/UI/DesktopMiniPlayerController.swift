@@ -20,6 +20,10 @@ final class DesktopMiniPlayerController {
     /// How far the window grew to the left for the card's lyrics panel, so it
     /// shrinks back from that side and a design switch starts where the card is.
     private var leftGrowth: CGFloat = 0
+    /// The glass bar grows two ways at once — down for lyrics, wider for the
+    /// artwork panel — so its size is worked out from both.
+    private var compactLyrics = false
+    private var compactArtwork = false
     private var cancellables = Set<AnyCancellable>()
 
     init(viewModel: MiniPlayerViewModel) {
@@ -98,11 +102,28 @@ final class DesktopMiniPlayerController {
             size = NSSize(width: 320, height: 505)
         } else if raw == "compact" {
             size = NSSize(width: DesktopCompactPlayerView.width, height: DesktopCompactPlayerView.height)
+            compactLyrics = false
+            compactArtwork = false
             root = AnyView(DesktopCompactPlayerView(
                 viewModel: viewModel,
-                onLyricsShown: lyricsResizer(panel, style: raw, base: size,
-                                             extra: NSSize(width: 0,
-                                                           height: DesktopCompactPlayerView.lyricsHeight))))
+                onLyricsShown: { [weak self, weak panel] on in
+                    guard let self, let panel else { return false }
+                    self.compactLyrics = on
+                    self.resizeCompact(panel, growLeft: self.leftGrowth > 0)
+                    return false
+                },
+                onArtworkShown: { [weak self, weak panel] on in
+                    guard let self, let panel else { return false }
+                    self.compactArtwork = on
+                    // Wider to the right, keeping the cover where it was — unless
+                    // the screen has no room there.
+                    let extra = DesktopCompactPlayerView.artworkGrowth
+                    let visible = (panel.screen ?? NSScreen.main)?.visibleFrame
+                    let growLeft = on && (self.leftGrowth > 0
+                        || panel.frame.maxX + extra > (visible?.maxX ?? .infinity))
+                    self.resizeCompact(panel, growLeft: growLeft)
+                    return growLeft
+                }))
         } else {
             size = NSSize(width: DesktopPlayerView.size, height: DesktopPlayerView.size)
             root = AnyView(DesktopPlayerView(
@@ -160,6 +181,25 @@ final class DesktopMiniPlayerController {
                                                    y: panel.frame.maxY), size: size)
             }
             return growLeft
+        }
+    }
+
+    /// Sizes the glass bar for its lyrics strip and artwork panel around where
+    /// the plain bar sits: `leftGrowth` is how far the window reaches left of
+    /// that spot, so closing the panel puts the bar back exactly there.
+    private func resizeCompact(_ panel: NSPanel, growLeft: Bool) {
+        // Next turn of the run loop, as in `lyricsResizer`: this is called from
+        // inside a SwiftUI update.
+        DispatchQueue.main.async { [weak self, weak panel] in
+            guard let self, let panel, self.style == "compact" else { return }
+            let extra = self.compactArtwork ? DesktopCompactPlayerView.artworkGrowth : 0
+            let size = NSSize(width: DesktopCompactPlayerView.width + extra,
+                              height: DesktopCompactPlayerView.height
+                                  + (self.compactLyrics ? DesktopCompactPlayerView.lyricsHeight : 0))
+            let barX = panel.frame.minX + self.leftGrowth
+            self.leftGrowth = growLeft ? extra : 0
+            self.place(panel, topLeft: NSPoint(x: barX - self.leftGrowth, y: panel.frame.maxY),
+                       size: size)
         }
     }
 

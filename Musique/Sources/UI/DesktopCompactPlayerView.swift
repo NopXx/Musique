@@ -4,20 +4,39 @@ import AppKit
 /// The desktop panel's compact design: a glass bar with a small cover, title,
 /// artist and a live waveform, a progress row, and the transport — the third
 /// `miniplayer.desktop_style` (`compact`). Lyrics grow the window downward by
-/// a strip between the title and the progress row, the same way the card does.
+/// a strip under the transport, the same way the card grows sideways.
+/// The cover's hover button opens the artwork full height on the bar's left:
+/// the window widens by `artworkGrowth` (rightward, or leftward when the
+/// screen has no room) and the controls tighten up beside it.
 struct DesktopCompactPlayerView: View {
     @ObservedObject var viewModel: MiniPlayerViewModel
     var onLyricsShown: (Bool) -> Bool = { _ in false }
+    /// Asks the controller to widen the window for the artwork panel; returns
+    /// whether it grew to the left, so the bar can stay pinned to its own side.
+    var onArtworkShown: (Bool) -> Bool = { _ in false }
     @State private var lyrics: [LyricLine] = []
     @State private var lyricsLoading = false
     /// Lags `showsLyrics` on the way in (window first) and leads it on the way
     /// out (strip first), as in `DesktopPlayerView`.
     @State private var expanded = false
     @State private var hoveringCover = false
+    /// What the user asked for. `artworkExpanded` drives the layout and
+    /// follows it as `expanded` follows the lyrics: window first on the way in,
+    /// panel first on the way out.
+    @State private var artworkShown = false
+    @State private var artworkExpanded = false
+    @State private var grewLeft = false
+    @State private var hoveringArtwork = false
 
     static let width: CGFloat = 340
-    static let height: CGFloat = 156
-    static let lyricsHeight: CGFloat = 82
+    /// How much wider the bar gets while the artwork panel is out.
+    static let artworkGrowth: CGFloat = 80
+    static let height: CGFloat = 166
+    static let lyricsHeight: CGFloat = 112
+    /// The artwork panel: square to the bar without lyrics.
+    static let artworkWidth: CGFloat = height
+    private static let coverSize: CGFloat = 56
+    private static let artworkMove = Animation.easeInOut(duration: 0.3)
     private static let corner: CGFloat = 24
     private static let stripMove = Animation.easeInOut(duration: 0.28)
 
@@ -28,26 +47,62 @@ struct DesktopCompactPlayerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            HStack(spacing: 0) {
+                if artworkExpanded {
+                    artworkPanel
+                        .frame(width: Self.artworkWidth)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+                VStack(spacing: 0) {
+                    header
+                    sourceLabel.padding(.top, 8)
+                    progress.padding(.top, 6)
+                    controls.padding(.top, 10)
+                }
+                .padding(.horizontal, artworkExpanded ? 14 : 18)
+                .padding(.top, 14)
+                .padding(.bottom, 14)
+            }
+            .frame(height: Self.height)
+            // Lyrics under everything, the full width of the bar — below the
+            // artwork panel too, which stays a square.
             if expanded { lyricsArea.transition(.opacity) }
-            progress.padding(.top, 14)
-            controls.padding(.top, 12)
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 14)
-        .frame(width: Self.width, height: Self.height + (expanded ? Self.lyricsHeight : 0),
+        .frame(width: Self.width + (artworkExpanded ? Self.artworkGrowth : 0),
+               height: Self.height + (expanded ? Self.lyricsHeight : 0),
                alignment: .top)
         .background(glass)
         .clipShape(RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
-        // The window is already tall while the strip grows; below the bar is clear.
-        .frame(maxHeight: .infinity, alignment: .top)
+        // The window is already tall (or wide) while a panel grows; the bar is
+        // pinned to the side the window didn't grow from, so it doesn't move.
+        .frame(maxWidth: .infinity, maxHeight: .infinity,
+               alignment: grewLeft ? .topTrailing : .topLeading)
+        .onChange(of: artworkShown) { _, on in
+            if on {
+                grewLeft = onArtworkShown(true)
+                // After the window has grown, as with the lyrics below.
+                DispatchQueue.main.async {
+                    withAnimation(Self.artworkMove) { artworkExpanded = true }
+                }
+            } else {
+                withAnimation(Self.artworkMove) { artworkExpanded = false } completion: {
+                    if !artworkShown { _ = onArtworkShown(false) }
+                }
+            }
+        }
+        // Nothing to show once the track is gone.
+        .onChange(of: hasTrack) { _, has in if !has { artworkShown = false } }
         // Initial too: switching design builds this view with lyrics already on,
         // and waiting for a change left the strip shut until toggled off and on.
         .onChange(of: showsLyrics, initial: true) { _, on in
             if on {
                 _ = onLyricsShown(true)
-                withAnimation(Self.stripMove) { expanded = true }
+                // After the window has grown (the controller resizes on the next
+                // turn). Animating first made the content taller than the window,
+                // which centres it: the bar jumped up and dropped back.
+                DispatchQueue.main.async {
+                    withAnimation(Self.stripMove) { expanded = true }
+                }
             } else {
                 withAnimation(Self.stripMove) { expanded = false } completion: {
                     if !showsLyrics { _ = onLyricsShown(false) }
@@ -64,20 +119,21 @@ struct DesktopCompactPlayerView: View {
         }
     }
 
-    /// Glass over a dark wash: the text is all white, and glass alone over a
-    /// light wallpaper leaves it unreadable (same recipe as the lock screen card).
+    /// Plain system glass, so the Liquid Glass Clear–Tinted setting in System
+    /// Settings carries through; a black wash under it held the bar near-opaque
+    /// whatever that was set to. Dark scheme instead, so the all-white text
+    /// still reads over a light wallpaper.
     private var glass: some View {
-        let shape = RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
-        return shape
-            .fill(.black.opacity(0.3))
-            .glassEffect(Glass.regular.tint(.white.opacity(0.04)), in: shape)
+        Color.clear
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
+            .environment(\.colorScheme, .dark)
     }
 
     // MARK: - Rows
 
     private var header: some View {
         HStack(spacing: 12) {
-            cover
+            if !artworkExpanded { cover.transition(.opacity) }
             VStack(alignment: .leading, spacing: 2) {
                 MarqueeText(text: hasTrack ? (snap?.title ?? "") : L10n.miniplayerNoTrack,
                             font: .system(size: 16, weight: .semibold),
@@ -89,65 +145,100 @@ struct DesktopCompactPlayerView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             WaveBars(active: snap?.isPlaying == true)
         }
+        // The cover's height, kept while the cover is out in the artwork panel,
+        // so the progress row and transport don't ride up.
+        .frame(height: Self.coverSize)
     }
 
     private var cover: some View {
-        ZStack(alignment: .bottomLeading) {
-            Group {
-                if let s = viewModel.artwork.artworkURL, let url = URL(string: s) {
-                    AsyncImage(url: url) { phase in
-                        if let img = phase.image {
-                            img.resizable().aspectRatio(contentMode: .fill)
-                        } else {
-                            Color.white.opacity(0.1)
-                        }
+        Group {
+            if let s = viewModel.artwork.artworkURL, let url = URL(string: s) {
+                AsyncImage(url: url) { phase in
+                    if let img = phase.image {
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        Color.white.opacity(0.1)
                     }
-                } else {
-                    Color.white.opacity(0.1)
                 }
-            }
-            .frame(width: 56, height: 56)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay { expandButton }
-
-            // Which player it is, where the app badge sits on the system's own.
-            if let snap, hasTrack {
-                Image(systemName: snap.source.sfSymbol)
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 15, height: 15)
-                    .background(RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(.black.opacity(0.55)))
-                    .padding(4)
-                    .opacity(hoveringCover ? 0 : 1)
+            } else {
+                Color.white.opacity(0.1)
             }
         }
+        .frame(width: Self.coverSize, height: Self.coverSize)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay { expandButton }
         .onHover { inside in
             withAnimation(.easeOut(duration: 0.15)) { hoveringCover = inside }
         }
     }
 
-    /// On hover, the cover turns into the way to the artwork card.
+    /// On hover, the cover turns into the way to the artwork panel beside the
+    /// bar. The card design has its own button in the corner.
     @ViewBuilder
     private var expandButton: some View {
         if hoveringCover {
             Button {
-                SettingsStore.shared.merge(["miniplayer": ["desktop_style": "card"]])
+                hoveringCover = false
+                artworkShown = true
             } label: {
                 ZStack {
                     RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.black.opacity(0.45))
-                    Image(systemName: "rectangle.expand.vertical")
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.white)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(L10n.tr("ขยายเป็นการ์ดปกเต็ม", "Expand to artwork card"))
+            .disabled(!hasTrack)
+            .help(L10n.tr("ขยายปก", "Expand artwork"))
             .transition(.opacity)
         } else {
             Color.clear
                 .contentShape(Rectangle())
+        }
+    }
+
+    /// The cover, full height on the bar's left. Motion artwork plays here as on
+    /// the card. The hover button (or a click) puts it away.
+    private var artworkPanel: some View {
+        ZStack(alignment: .bottomTrailing) {
+            ZStack {
+                Color(viewModel.palette.gradientMid)
+                if viewModel.miniplayerAnimation != "off",
+                   let s = viewModel.artwork.animationURL, !s.isEmpty, let url = URL(string: s) {
+                    AnimatedArtworkView(url: url, contentMode: .fill)
+                } else if let s = viewModel.artwork.artworkURL, let url = URL(string: s) {
+                    AsyncImage(url: url) { phase in
+                        if let img = phase.image { img.resizable().aspectRatio(contentMode: .fill) }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(Rectangle())
+            .onTapGesture { artworkShown = false }
+
+            if hoveringArtwork {
+                Button { artworkShown = false } label: {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 28, height: 28)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(.black.opacity(0.5)))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(8)
+                .help(L10n.tr("ย่อปก", "Collapse artwork"))
+                .transition(.opacity)
+            }
+        }
+        // Inset from the bar's edge, so the cover reads as a card in the glass.
+        .padding(12)
+        .onHover { inside in
+            withAnimation(.easeOut(duration: 0.15)) { hoveringArtwork = inside }
         }
     }
 
@@ -158,13 +249,27 @@ struct DesktopCompactPlayerView: View {
                 if lyrics.isEmpty {
                     LyricsStatusView(loading: lyricsLoading)
                 } else {
-                    FullscreenLyricsView(lines: lyrics, playback: snap, fontSize: 13, spacing: 5)
+                    FullscreenLyricsView(lines: lyrics, playback: snap, fontSize: 13, spacing: 5,
+                                         // Four ~21pt rows in 100pt: the sung one third, so two
+                                         // lines of what was sung show above it.
+                                         anchor: 0.55)
                 }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 70)
-            .padding(.top, 12)
+            .frame(height: Self.lyricsHeight - 12)
+            .padding(.horizontal, 18)
+            .padding(.bottom, 12)
         }
+    }
+
+    /// Which player it is, above the time row as on the artwork card. Off the
+    /// cover, so it stays put when the cover moves out to the artwork panel.
+    /// Keeps its height with no track, so the rows below don't move.
+    private var sourceLabel: some View {
+        Label(snap?.source.displayName ?? " ", systemImage: snap?.source.sfSymbol ?? "music.note")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.75))
+            .opacity(hasTrack ? 1 : 0)
     }
 
     private var progress: some View {
@@ -193,17 +298,18 @@ struct DesktopCompactPlayerView: View {
             sideButton(icon: viewModel.desktopLyricsEnabled ? "quote.bubble.fill" : "quote.bubble",
                        active: viewModel.desktopLyricsEnabled, action: viewModel.toggleDesktopLyrics)
                 .disabled(!hasTrack)
-            Spacer()
-            HStack(spacing: 28) {
-                transportButton("backward.fill", size: 20, action: viewModel.previous)
+            Spacer(minLength: 0)
+            // Tighter beside the artwork panel, where the column is ~240pt.
+            HStack(spacing: artworkExpanded ? 12 : 28) {
+                transportButton("backward.fill", size: artworkExpanded ? 15 : 20, action: viewModel.previous)
                 transportButton(snap?.isPlaying == true ? "pause.fill" : "play.fill",
-                                size: 26, action: viewModel.playPause)
-                    .frame(width: 28)
-                transportButton("forward.fill", size: 20, action: viewModel.next)
+                                size: artworkExpanded ? 20 : 26, action: viewModel.playPause)
+                    .frame(width: artworkExpanded ? 22 : 28)
+                transportButton("forward.fill", size: artworkExpanded ? 15 : 20, action: viewModel.next)
             }
             .disabled(!canControl)
             .opacity(canControl ? 1 : 0.35)
-            Spacer()
+            Spacer(minLength: 0)
             // Up to the artwork card — mirrors the card's own shrink button.
             sideButton(icon: "rectangle.expand.vertical", active: false) {
                 SettingsStore.shared.merge(["miniplayer": ["desktop_style": "card"]])
