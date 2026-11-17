@@ -1,51 +1,121 @@
+<div align="center">
+
+<img src="docs/images/icon.png" width="128" alt="Musique icon">
+
 # Musique
 
-A native macOS menu bar companion for Apple Music, Spotify and browser players — Last.fm scrobbling, listening history, webhooks, edit-rules, notifications, time-synced lyrics, a polished mini player and a desktop player.
+**A native macOS menu bar companion for Apple Music, Spotify and browser players.**
 
-Written in Swift / SwiftUI. Talks to Music.app and Spotify via ScriptingBridge — event-driven and system-integrated.
+Time-synced lyrics · Last.fm scrobbling · a desktop player · a lock screen that plays along
+
+[![Latest release](https://img.shields.io/github/v/release/NopXx/Musique?label=release)](https://github.com/NopXx/Musique/releases/latest) ![macOS 26+](https://img.shields.io/badge/macOS-26%2B-black?logo=apple) ![Swift](https://img.shields.io/badge/Swift-SwiftUI-orange?logo=swift) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](#license)
+
+[**Download**](https://github.com/NopXx/Musique/releases/latest) · [Features](#features) · [Install](#install) · [Build from source](#build-from-source)
+
+<img src="docs/images/glass-bar-artwork.png" width="466" alt="The glass bar desktop player with its artwork panel open">
+
+</div>
+
+---
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/glass-bar-lyrics.png" width="340" alt="Glass bar with lyrics"><br><sub>Glass bar with lyrics</sub></td>
+    <td align="center"><img src="docs/images/card-lyrics.png" width="340" alt="Artwork card with lyrics"><br><sub>Artwork card with lyrics</sub></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><img src="docs/images/mini-player.png" width="260" alt="Menu bar mini player"><br><sub>Menu bar mini player</sub></td>
+  </tr>
+</table>
 
 ## Features
 
-- **Menu bar status item** — two styles:
-  - *Text* — configurable display (icon, play state, track, artist, max length)
-  - *Dynamic Island* — pill with album artwork thumbnail, play/pause icon (clickable), and a real-time audio waveform; pill tint follows the current track's accent color
-- **Three playback sources** — Apple Music and Spotify (polled via ScriptingBridge), plus browser players through the [Web Scrobbler](https://web-scrobbler.com) extension's webhook; the active one is picked automatically or from the mini player
-- **Mini player popover** — three layouts (Classic / Tall / Immersive), animated artwork, blurred backdrop, dominant-color gradient, scrubber, full-width audio waveform, and a lyrics toggle that morphs the cover into the corner
-- **Desktop player** — a free-standing floating player in two designs, an *artwork card* and a *glass bar*, switched from the player itself; lyrics open beside the card (or below the bar) without moving it
-- **Time-synced lyrics** — Apple Music TTML with word-by-word highlighting (letters rise on long held notes), falling back to LRCLIB; works for Spotify and browser tracks too, and picks up lyrics the Music app has already loaded on this Mac
-- **Fullscreen artwork** — motion artwork mirrored into the margins or a card over a blurred backdrop, with lyrics and a Liquid Glass clock
-- **Real-time audio waveform** — Core Audio Process Tap (macOS 14.2+) captures Music.app's output, FFT (Accelerate / vDSP) decomposes it into 10 log-spaced frequency bands rendered as bars in the menu bar, mini player, and lock screen card
-- **Now Playing widget** — small / medium / large WidgetKit widgets sharing app-group data, with transport controls (play/pause/next/previous) via App Intents and live in-process progress bar
-- **Last.fm scrobbling** — `track.updateNowPlaying` on play, `track.scrobble` once per play (configurable threshold), with auth flow and Keychain-style local config
-- **Pending scrobble queue** — failed scrobbles are persisted to SQLite and retried on launch + every 5 minutes
-- **Now Playing takeover** — `MPNowPlayingInfoCenter` with silent-audio looper so Musique owns the lock screen / Control Center slot, artwork included
-- **Notifications** — banner with artwork on track change and scrobble success
-- **Webhooks** — POST JSON payloads in Music-Scrobbler format with optional heartbeat
-- **Listening history** — every play / pause / resume / scrobble event is recorded to SQLite; viewable in Settings
-- **Edit rules** — automatically rewrite artist / track / album metadata before scrobbling, configurable inline from the mini player or in Settings
-- **Import / export** — Edit-rule JSON can be backed up and restored from Settings
-- **Lock screen overlay** — full-screen now-playing window rendered above the macOS login UI via SkyLight private API (space pinning at NotificationCenterAtScreenLock level)
-- **Debug dashboard** — opt-in loopback web page with live state, listening history, artwork and lyrics lookups
-- **Localization** — Thai and English; switchable in Settings → General
+### 🎤 Lyrics that sing along
 
-## Requirements
+- **Word-by-word highlighting** from Apple Music's own lyrics, falling back to [LRCLIB](https://lrclib.net). Works for Spotify and browser tracks too, and picks up lyrics the Music app has already loaded on this Mac.
+- **Held notes swell** the whole word: it grows, rises and glows for as long as the note lasts.
+- **Backing vocals** get their own smaller row under the line, lit on their own timing.
+- **Overlapping lines** each stay lit until they end. Instrumental breaks show a **• • •** that fills dot by dot.
+- Shows where the lyrics came from, Apple Music or LRCLIB.
 
-- macOS 26.0 or later — required for Liquid Glass UI (lock screen / mini player), and Core Audio Process Tap (real-time audio waveform)
-- Xcode 26+
-- [`xcodegen`](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+### 🎛 Players everywhere
 
-## Build
+| Where | What |
+|---|---|
+| **Menu bar** | Text, or a *Dynamic Island* pill with artwork, play/pause and a live audio waveform tinted to the cover |
+| **Mini player** | Popover in three layouts: Classic, Tall and Immersive. Animated artwork, colour gradient, scrubber and lyrics |
+| **Desktop player** | A floating *artwork card* (controls on hover) or a *glass bar* that follows the system Liquid Glass setting. Lyrics open beside or below it |
+| **Fullscreen** | Motion artwork mirrored into the margins, lyrics, and a Liquid Glass clock |
+| **Lock screen** | The now-playing card and fullscreen artwork drawn above the macOS login screen |
+| **Widgets** | Small, medium and large Now Playing widgets with transport controls |
+
+### 📊 Scrobbling & history
+
+- **Last.fm**: now playing, plus one scrobble per play at a threshold you set. Failed scrobbles queue offline and retry.
+- **Edit rules** rewrite artist, track or album before anything is scrobbled or shown. Set them up from the mini player and back them up as JSON.
+- **Listening history**: every play, pause, resume and scrobble, in SQLite.
+
+### 🔌 Integrations
+
+- **Three sources**: Apple Music, Spotify and browser players via the [Web Scrobbler](https://web-scrobbler.com) extension. The active one is picked automatically.
+- **Webhooks**: JSON payloads in Music-Scrobbler format, with an optional heartbeat.
+- **Notifications** on track change and scrobble.
+- **Now Playing takeover**: Musique owns the Control Center media slot.
+- **Debug dashboard**: an opt-in local web page with live state, history, artwork and lyrics lookups.
+
+### ⚙️ Everyday
+
+- Checks GitHub for a new version once a day and tells you. You can also run *Check for Updates…* yourself.
+- Launch at login, optional Dock icon, Thai and English.
+
+## Install
+
+1. Download `Musique-<version>.dmg` from [**Releases**](https://github.com/NopXx/Musique/releases/latest).
+2. Open it and drag **Musique** to Applications.
+3. Releases are signed for development and **not notarized**, so macOS may block the first launch. Allow it under **System Settings → Privacy & Security → Open Anyway**.
+
+**Requires macOS 26 or later.**
+
+### Permissions
+
+macOS asks for each of these the first time it's needed:
+
+| Permission | Used for | If you denied it |
+|---|---|---|
+| Automation (Apple Events) | Controlling Music / Spotify | System Settings → Privacy & Security → Automation → Musique |
+| Apple Music (MusicKit) | Apple's word-timed lyrics (needs a subscription) | Lyrics come from LRCLIB instead |
+| Audio capture | The live waveform | The waveform stays flat |
+| Notifications | Track, scrobble and update banners | System Settings → Notifications → Musique |
+
+Your data lives in `~/Library/Application Support/Musique/`:
+
+| Path | Contents |
+|---|---|
+| `settings.json` | Settings |
+| `history.db` | History, edit rules and pending scrobbles |
+| `TTML/` | Lyrics cache |
+| `Videos/` | Artwork cache |
+
+## Build from source
+
+You need **Xcode 26+** and [`xcodegen`](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
 
 ```sh
+cp Secrets.xcconfig.example Secrets.xcconfig   # optional: your Last.fm API key + secret
 xcodegen generate
-xcodebuild -project Musique.xcodeproj -scheme Musique -configuration Debug build
+open Musique.xcodeproj                          # then Run
 ```
 
-Or open `Musique.xcodeproj` in Xcode and Run.
+The `.xcodeproj` is generated and not committed, so regenerate it after every pull. To run the tests:
 
-The generated `.xcodeproj` is not committed — regenerate it from `project.yml` whenever you pull.
+```sh
+xcodebuild -project Musique.xcodeproj -scheme Musique -destination 'platform=macOS' test
+```
 
-## Architecture
+<details>
+<summary><b>Architecture</b></summary>
 
 ```
 PlayerMonitor          ──┐
@@ -54,106 +124,74 @@ PlayerMonitor          ──┐
   + Web Scrobbler push   │
   + DistributedNotif     ├─►  ScrobblerService  ──►  Last.fm
   + 1 Hz tick timer      │      └─► PendingScrobbleQueue (retry)
-                         │
                          ├─►  NowPlayingService (Takeover)
-                         │
                          ├─►  WebhookDispatcher
-                         │
                          ├─►  NotificationService
-                         │
                          ├─►  HistoryRecorder ──► HistoryStore (SQLite)
-                         │
                          ├─►  WidgetDataManager  ──►  App Group JSON + WidgetCenter reload
-                         │                            └─►  MusiqueWidget (WidgetKit + App Intents)
-                         │
                          ├─►  MenuBarController + MiniPlayer (SwiftUI)
-                         │
                          ├─►  DesktopMiniPlayerController (card / glass bar)
-                         │
                          ├─►  LyricsService  ──►  Apple TTML (MusicKit) / LRCLIB
-                         │
                          └─►  LockScreenController
                                 └─► SkyLightOperator (private CGS space pinning)
 
-MusicAudioLevelMonitor  ──►  CATapDescription + AudioHardwareCreateProcessTap (macOS 14.2+)
-                             └─► vDSP FFT → 10 log-spaced bands → @Published
-                                 └─► consumed by menu bar / miniplayer / lockscreen wave views
-
-EditHistoryService  ──►  applies rules before scrobble / webhook / display
-L10n                ──►  runtime i18n (Thai / English) via SettingsStore
+MusicAudioLevelMonitor  ──►  Core Audio Process Tap → vDSP FFT → 10 bands
+                             └─► menu bar / mini player / lock screen waveforms
+UpdateService           ──►  GitHub releases, once a day
+EditHistoryService      ──►  applies rules before scrobble / webhook / display
 ```
 
-- `PlayerMonitor` owns one ScriptingBridge object per player and listens to `com.apple.Music.playerInfo` / `com.spotify.client.PlaybackStateChanged` distributed notifications. A 1 Hz timer ticks position locally; full state resyncs fire on actual events. Web Scrobbler tracks are pushed to a loopback webhook instead.
-- `MusicAppController` routes control commands (play / pause / next / prev / seek) to whichever player is active, through ScriptingBridge on a background queue.
-- `HistoryStore` is an `actor` wrapping `sqlite3` directly — no third-party dependency.
+- `PlayerMonitor` owns one ScriptingBridge object per player and listens to each player's distributed notifications. A 1 Hz timer moves the position forward between them. Web Scrobbler tracks are pushed to a loopback webhook instead.
+- `MusicAppController` sends control commands to whichever player is active, on a background queue.
+- `HistoryStore` is an `actor` wrapping `sqlite3` directly, with no third-party dependency.
 
-## Settings
+</details>
 
-All user data lives under `~/Library/Application Support/Musique/`:
-
-- `settings.json` — JSON-merged with defaults
-- `history.db` — events, edit rules, pending scrobbles
-- `TTML/` — raw lyrics cache
-- `Videos/` — animated artwork cache
-
-## Project layout
+<details>
+<summary><b>Project layout</b></summary>
 
 ```
-Musique/
-  Sources/
-    App.swift
-    Player/                  PlayerMonitor, MusicAppController, NowPlayingService,
-                             MusicAudioLevelMonitor (Core Audio Process Tap + FFT),
-                             WebScrobblerReceiver, WidgetDataManager (App Group writer)
-      Bridge/                Music.h (sdef-generated), Spotify.h, stubs
-    Scrobbler/               LastFMClient, ScrobblerService, PendingScrobbleQueue
-    Lyrics/                  LyricsService (Apple TTML, LRCLIB, parsers, prefetcher)
-    Artwork/                 ArtworkService, ColorExtractor, CustomArtworkStore
-    History/                 HistoryStore, HistoryRecorder, EditHistoryService
-    Notifications/           NotificationService
-    Webhooks/                WebhookDispatcher
-    Services/                DebugServer, LaunchAtLoginService
-    Helpers/                 L10n (i18n), TextShape
-    Settings/                SettingsStore
-    UI/                      MenuBarController, MenuBarDynamicIslandView,
-                             MiniPlayer*, DesktopMiniPlayerController,
-                             DesktopPlayerView, DesktopCompactPlayerView,
-                             AnimationFullscreen*, FullscreenArtworkView,
-                             AnimatedArtworkView, SettingsView, ...
-      LockScreen/            LockScreenController, SkyLightOperator, LockScreenWindow,
-                             LockScreenPlayerView (with real-time wave bars)
-    Wallpaper/               MotionWallpaperController, MotionWallpaperStore (inactive)
-  Musique-Bridging-Header.h
-  Info.plist                 (NSAudioCaptureUsageDescription for Process Tap)
-  Musique.entitlements
-MusiqueWidget/               WidgetKit extension — small / medium / large + App Intents
-MusiqueWallpaper/            wallpaper ExtensionKit appex
-Shared/                      AppGroup identifier
-MusiqueTests/
-web/                         debug dashboard page
-docs/                        design notes (Apple Music TTML pipeline)
-project.yml                  (xcodegen)
+Musique/Sources/
+  Player/          PlayerMonitor, MusicAppController, NowPlayingService,
+                   MusicAudioLevelMonitor, WebScrobblerReceiver, WidgetDataManager
+    Bridge/        Music.h (sdef-generated), Spotify.h, stubs
+  Scrobbler/       LastFMClient, ScrobblerService, PendingScrobbleQueue
+  Lyrics/          LyricsService (Apple TTML, LRCLIB, parsers, prefetcher), BackgroundVocals
+  Artwork/         ArtworkService, ColorExtractor, CustomArtworkStore
+  History/         HistoryStore, HistoryRecorder, EditHistoryService
+  Notifications/   NotificationService
+  Webhooks/        WebhookDispatcher
+  Services/        DebugServer, LaunchAtLoginService, UpdateService
+  Helpers/         L10n, TextShape
+  Settings/        SettingsStore
+  UI/              menu bar, mini player, desktop player, fullscreen, settings
+    LockScreen/    LockScreenController, SkyLightOperator, LockScreenPlayerView
+  Wallpaper/       motion wallpaper (inactive)
+MusiqueWidget/     WidgetKit extension + App Intents
+MusiqueWallpaper/  wallpaper ExtensionKit appex
+Shared/            App Group identifier
+MusiqueTests/      unit tests
+web/               debug dashboard
+docs/              design notes (Apple Music TTML pipeline)
+project.yml        xcodegen spec
 ```
 
-## Permissions
+</details>
 
-The first time Musique sends a command to Music.app or Spotify, macOS will prompt for **Apple Events** automation permission (once per player). If you deny it, control buttons stop working — re-enable it under **System Settings → Privacy & Security → Automation → Musique → Music / Spotify**.
+## Roadmap
 
-Apple Music lyrics ask for **Apple Music (MusicKit) access** and need a subscription; without it lyrics come from LRCLIB. The audio waveform asks for **audio capture** permission.
+- Move the Last.fm session key from `settings.json` to the Keychain
+- Notarized releases, and installing updates from inside the app (it only checks and notifies today)
+- Finish the Thai translation: a few labels in the mini player's edit panel are still English
+- Waveform for browser playback (the audio tap only listens to Music and Spotify)
 
-## Status
-
-Most features described above are implemented and working. Outstanding:
-
-- Last.fm session-key migration to Keychain
-- Localization for non-Settings views (MiniPlayer, AnimationFullscreen)
-- App icon, notarization and auto-update (releases are signed for development only)
-
-See [TODO.md](TODO.md) for the live punch list.
+See [TODO.md](TODO.md) for the full list.
 
 ## Acknowledgements
 
-Artwork lookup uses [`apple-music-artwork-search`](https://apple-music-artwork.nopxx.site/).
+- Artwork lookup: [`apple-music-artwork-search`](https://apple-music-artwork.nopxx.site/)
+- Fallback lyrics: [LRCLIB](https://lrclib.net)
+- TTML parsing: [MusanovaKit](https://github.com/rryam/MusanovaKit)
 
 ## License
 
