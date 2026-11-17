@@ -9,7 +9,7 @@
 ### Foundation
 - [x] Xcode project skeleton (xcodegen) — 3 targets: app, widget, tests
 - [x] App Group: `group.com.nopxx.musique`
-- [x] Min target macOS 14, Bundle ID `com.nopxx.musique`
+- [x] Min target macOS 26 (Liquid Glass + Process Tap), Bundle ID `com.nopxx.musique`
 - [x] Entitlements: Apple Events, network client, app-sandbox = false
 
 ### Player integration
@@ -116,13 +116,14 @@
 ## 🚧 ยังไม่ทำ
 
 ### Widget extension
-- [ ] `WidgetCenter.shared.reloadAllTimelines()` ทุกครั้งที่เพลงเปลี่ยน
-- [ ] Widget UI: small / medium ใช้ artwork + title + artist
-- [ ] Progress timeline (entries ห่าง 30s ถึงปลายเพลง)
+- [x] `WidgetCenter.shared.reloadAllTimelines()` เมื่อเพลง / play state / artwork / palette เปลี่ยน (`WidgetDataManager`)
+- [x] Widget UI: small / medium / large ใช้ artwork + title + artist + transport (App Intents)
+- [x] Progress: widget วาด progress เองจาก position + timestamp (ไม่ต้องทำ timeline entries ทุก 30s)
 
 ### Localization (remaining views)
-- [ ] MiniPlayerView — Thai strings (`ยังไม่ได้เล่นเพลง`, `เพลงสั้นเกินไป`, `แก้ข้อมูลเพลง`, etc.)
-- [ ] AnimationFullscreenView — `กดเพื่อปิด`
+- [x] MiniPlayerView — ข้อความหลักผ่าน `L10n` แล้ว
+- [ ] MiniPlayerView edit panel — ป้าย `Track` / `Artist` / `Album` ยังเป็นอังกฤษล้วน
+- [ ] AnimationFullscreenView — `กดเพื่อปิด` ยัง hardcode ภาษาไทย (ไม่ผ่าน `L10n`)
 
 ### Desktop mini player
 - [x] `DesktopMiniPlayerController` — borderless `NSPanel`, view model เดียวกับ popover
@@ -132,7 +133,7 @@
 - [x] ลากย้ายได้ (`WindowDragGesture`) + จำตำแหน่ง (`setFrameAutosaveName`) — จำตำแหน่งเดียว ไม่แยกต่อจอ; หลุดจอ → กลับมุมขวาบน
 - [x] `collectionBehavior` `.canJoinAllSpaces` + `.stationary`
 - [x] เนื้อเพลง: card ยืดหน้าต่างลงเป็นแถบ 2–3 บรรทัดใต้ปก (ขอบบนนิ่ง)
-- [ ] แถบเนื้อเพลงยืดเลยขอบล่างจอถ้าหน้าต่างชิดล่าง
+- [ ] แถบกระจก: เนื้อเพลงยืดหน้าต่างลงเลยขอบล่างจอถ้าหน้าต่างชิดล่าง (การ์ดยืดด้านข้าง เลือกซ้าย/ขวาตามที่ว่างแล้ว)
 - [ ] ลองบนเครื่องจริง: ระดับ `desktop` กดปุ่มได้, edit overlay (classic) พิมพ์ได้
 - [ ] ซ่อนอัตโนมัติตอน fullscreen app / ตอนไม่มีเพลง (optional)
 
@@ -140,7 +141,7 @@
 - [x] ปุ่มเนื้อเพลงใน footer (`miniplayer.lyrics`), footer เหลือ 5 ปุ่ม (ตัดเต็มจอ + แจ้งเตือน)
 - [x] Animation แบบ Apple Music: ปก morph เป็น thumbnail (`matchedGeometryEffect`), ข้อความวิ่งตามขอบปก; motion cover morph ด้วยภาพนิ่งแล้ว fade วิดีโอกลับ
 - [x] `LyricsService` dedupe lookup ที่วิ่งซ้อน (เดิมผลว่างเขียนทับ cache)
-- [ ] เพลงไม่มีเนื้อเพลง: กดปุ่มแล้วไม่มีอะไรบอก
+- [x] เพลงไม่มีเนื้อเพลง: `LyricsStatusView` ขึ้น spinner ระหว่างหา แล้ว "No lyrics found"
 
 ### Web Scrobbler ingest (รับ webhook จาก [web-scrobbler](https://github.com/web-scrobbler/web-scrobbler))
 เป้าหมาย: เพลงที่เล่นในเว็บ (YouTube, SoundCloud, Bandcamp ฯลฯ) ผ่าน extension web-scrobbler ส่งเข้า Musique เป็น source ที่สาม ถัดจาก Apple Music / Spotify
@@ -196,15 +197,17 @@ Tasks:
 - [ ] Waveform (`MusicAudioLevelMonitor`) ไม่ tap browser — เพลงจากเว็บไม่มี wave (ต้อง tap Chrome/Safari process; optional)
 
 ### Polish
-- [ ] App icon + Dock icon (LSUIElement = NO ตอน first-run welcome?)
-- [ ] Code signing + notarization สำหรับ release
-- [ ] Auto-update mechanism (Sparkle หรือ GitHub releases)
-- [ ] Last.fm session_key migration to Keychain
+- [x] App icon (`AppIcon.icon`) + Dock icon toggle (`general.show_in_dock`)
+- [x] Code signing (Apple Development) สำหรับ DMG
+- [ ] Notarization สำหรับ release
+- [x] Update check — `UpdateService` เช็ค GitHub release วันละครั้ง + แจ้งเตือน + "Check for Updates…"
+- [ ] ติดตั้ง update จากในแอป (Sparkle) — ตอนนี้แค่เปิดหน้า release ให้โหลด DMG เอง
+- [ ] Last.fm session_key migration to Keychain (ยังเก็บใน `settings.json`)
 
 ### ScriptingBridge upgrade (optional — performance)
-- [ ] Generate `Music.h` จาก `sdef`/`sdp`
-- [ ] แทน NSAppleScript polling → typed Swift API
-- [ ] Lower CPU เพราะไม่ต้อง parse string ทุกวินาที
+- [x] Generate `Music.h` จาก `sdef`/`sdp` (+ `Spotify.h` เขียนเอง)
+- [x] แทน NSAppleScript polling → typed ScriptingBridge API (`AppleMusicController` / `SpotifyController`)
+- [x] Lower CPU — ไม่ parse string ทุกวินาที; 1 Hz tick แค่เดิน position
 
 ---
 
