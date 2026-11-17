@@ -119,13 +119,14 @@ struct DesktopCompactPlayerView: View {
         }
     }
 
-    /// Glass over a dark wash: the text is all white, and glass alone over a
-    /// light wallpaper leaves it unreadable (same recipe as the lock screen card).
+    /// Plain system glass, so the Liquid Glass Clear–Tinted setting in System
+    /// Settings carries through; a black wash under it held the bar near-opaque
+    /// whatever that was set to. Dark scheme instead, so the all-white text
+    /// still reads over a light wallpaper.
     private var glass: some View {
-        let shape = RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
-        return shape
-            .fill(.black.opacity(0.3))
-            .glassEffect(Glass.regular.tint(.white.opacity(0.04)), in: shape)
+        Color.clear
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
+            .environment(\.colorScheme, .dark)
     }
 
     // MARK: - Rows
