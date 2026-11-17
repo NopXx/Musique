@@ -344,12 +344,16 @@ struct FullscreenLyricsView: View {
         }
         // Lines leave through the top and bottom edges; fade them rather than
         // slicing them off mid-glyph.
-        .mask(LinearGradient(stops: [.init(color: .clear, location: 0),
-                                     .init(color: .white, location: 0.1),
-                                     .init(color: .white, location: 0.82),
-                                     .init(color: .clear, location: 1)],
-                             startPoint: .top, endPoint: .bottom))
-        .clipped()
+        // Wider than the column, so a swelling word at either edge isn't sliced
+        // off; top and bottom still end at the column's own edges.
+        .mask {
+            LinearGradient(stops: [.init(color: .clear, location: 0),
+                                   .init(color: .white, location: 0.1),
+                                   .init(color: .white, location: 0.82),
+                                   .init(color: .clear, location: 1)],
+                           startPoint: .top, endPoint: .bottom)
+                .padding(.horizontal, -24)
+        }
     }
 
     private var tickInterval: Double { reduceMotion ? 0.25 : 1.0 / 30.0 }
@@ -435,6 +439,7 @@ private struct LyricsColumn: View, Equatable {
                 .animation(.easeOut(duration: 0.12), value: current)
             }
             .scrollDisabled(true)
+            .scrollClipDisabled()
             .scrollIndicators(.hidden)
             .onChange(of: target, initial: true) { old, n in
                 // The first placement lands at once: springing there from the top
@@ -643,6 +648,10 @@ private struct SungWordRenderer: TextRenderer {
     /// Grey of the not-yet-sung part of the sung line — brighter than the lines
     /// around it, so the line still reads as the current one before it's sung.
     var unsung: Double = 0.45
+
+    /// Room to draw past the text's own box: a held word grows ~8%, rises and
+    /// glows, and without this its first and last letters were cut off.
+    var displayPadding: EdgeInsets { EdgeInsets(top: 24, leading: 24, bottom: 24, trailing: 24) }
 
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         for line in layout {
