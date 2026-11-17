@@ -386,9 +386,10 @@ final class MusicAudioLevelMonitor: ObservableObject {
         var bundleIDs: [String] = []
         if settings.bool(["sources", "apple_music_enabled"]) { bundleIDs.append("com.apple.Music") }
         if settings.bool(["sources", "spotify_enabled"]) { bundleIDs.append("com.spotify.client") }
-        let running = NSWorkspace.shared.runningApplications
+        // Targeted lookup: scanning runningApplications asks LaunchServices for
+        // every app's bundle ID, which showed up at ~6% of the main thread.
         return bundleIDs.compactMap { id in
-            running.first { $0.bundleIdentifier == id }?.processIdentifier
+            NSRunningApplication.runningApplications(withBundleIdentifier: id).first?.processIdentifier
         }
     }
 
