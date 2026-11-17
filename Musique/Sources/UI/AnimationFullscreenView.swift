@@ -324,12 +324,14 @@ struct FullscreenLyricsView: View {
             // Reduce Motion: still keeps time, just stops sweeping per frame.
             TimelineView(.animation(minimumInterval: tickInterval, paused: !playback.isPlaying)) { context in
                 let position = playback.livePosition(at: context.date)
+                let current = all.lastIndex { $0.time <= position } ?? 0
                 // The frame only picks which line is sung; the column below is
                 // Equatable, so it re-renders when that changes, not per frame.
                 // Rebuilding every line, shadow and scroll layout 30 times a second
                 // was ~23% of the main thread with the desktop card's panel open.
                 LyricsColumn(lines: all,
-                             current: all.lastIndex { $0.time <= position } ?? 0,
+                             current: current,
+                             lingering: Self.lingering(all, before: current, at: position),
                              // The scroll spring takes ~0.5s to land; starting it on the
                              // line's own time put the line in place after its first
                              // words were sung. Scroll a beat early so it arrives as
@@ -351,6 +353,17 @@ struct FullscreenLyricsView: View {
     }
 
     private var tickInterval: Double { reduceMotion ? 0.25 : 1.0 / 30.0 }
+
+    /// Earlier lines still being sung: a held "Ooh" carries on under the next
+    /// line, which starts on its own time. They stay lit and keep wiping, as in
+    /// Apple Music, instead of going dim mid-note when the column moves on.
+    private static func lingering(_ lines: [LyricLine], before current: Int, at position: Double) -> [Int] {
+        (max(0, current - 3)..<min(current, lines.count)).filter { i in
+            let l = lines[i]
+            let end = max(l.end ?? 0, l.segments.last?.end ?? 0, l.background.last?.end ?? 0)
+            return end > position
+        }
+    }
 
     /// `lines` with a dots marker dropped into every stretch of the song nobody
     /// sings through: the intro before the first line, and any instrumental in the
@@ -385,6 +398,7 @@ struct FullscreenLyricsView: View {
 private struct LyricsColumn: View, Equatable {
     let lines: [LyricLine]
     let current: Int
+    let lingering: [Int]
     let target: Int
     let height: CGFloat
     let playback: NowPlayingSnapshot
@@ -394,7 +408,7 @@ private struct LyricsColumn: View, Equatable {
     let tickInterval: Double
 
     static func == (a: Self, b: Self) -> Bool {
-        a.current == b.current && a.target == b.target && a.height == b.height
+        a.current == b.current && a.lingering == b.lingering && a.target == b.target && a.height == b.height
             && a.fontSize == b.fontSize && a.spacing == b.spacing && a.anchor == b.anchor
             && a.tickInterval == b.tickInterval && a.lines == b.lines
             // What the sung line's clock projects from.
@@ -409,7 +423,8 @@ private struct LyricsColumn: View, Equatable {
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: spacing) {
                     ForEach(lines.indices, id: \.self) { n in
-                        line(lines[n], distance: abs(n - current)).id(n)
+                        line(lines[n], distance: abs(n - current),
+                             sung: n == current || lingering.contains(n)).id(n)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -436,14 +451,14 @@ private struct LyricsColumn: View, Equatable {
     }
 
     @ViewBuilder
-    private func line(_ l: LyricLine, distance: Int) -> some View {
+    private func line(_ l: LyricLine, distance: Int, sung: Bool) -> some View {
         // Backing vocals sit on a smaller row under their line, as in Apple
         // Music: always there, wiped on their own clock while the line is sung.
         VStack(alignment: .leading, spacing: fontSize * 0.15) {
-            mainLine(l, distance: distance)
+            mainLine(l, distance: distance, sung: sung)
             if l.background.isEmpty {
                 EmptyView()
-            } else if distance == 0 {
+            } else if sung {
                 let bg = LyricLine(time: l.time, text: l.backgroundText, segments: l.background)
                 // Same hidden-copy-plus-overlay as the sung line, for the same reason.
                 Text(bg.text)
@@ -470,9 +485,9 @@ private struct LyricsColumn: View, Equatable {
     }
 
     @ViewBuilder
-    private func mainLine(_ l: LyricLine, distance: Int) -> some View {
+    private func mainLine(_ l: LyricLine, distance: Int, sung: Bool) -> some View {
         Group {
-            if distance == 0, !l.segments.isEmpty {
+            if sung, !l.segments.isEmpty {
                 // The wipe rebuilds its Text every frame; as a plain child that
                 // re-measured the line and, through the VStack, the whole scroll
                 // column. A hidden copy holds the layout and the wipe draws as an
@@ -484,7 +499,7 @@ private struct LyricsColumn: View, Equatable {
                     }
             } else {
                 Text(l.text.isEmpty ? " " : l.text)
-                    .foregroundStyle(.white.opacity(distance == 0 ? 1 : distance <= 2 ? 0.34 : 0.22))
+                    .foregroundStyle(.white.opacity(sung ? 1 : distance <= 2 ? 0.34 : 0.22))
             }
         }
             .font(.system(size: fontSize, weight: .bold))
@@ -535,7 +550,10 @@ private struct KaraokeLyricText: View {
                   let range = content.range(of: segment.text,
                                             range: cursor..<content.endIndex) else { continue }
             let gap = cursor..<range.lowerBound
-            if placed.isEmpty || content[gap].contains(where: \.isWhitespace) { word += 1 }
+            // Japanese, Chinese and Thai don't put spaces between words, so there
+            // a whole line would read as one word and swell; each syllable stands alone.
+            if placed.isEmpty || content[gap].contains(where: \.isWhitespace)
+                || spaceless(segment.text) || spaceless(placed[placed.count - 1].segment.text) { word += 1 }
             placed.append((segment, range, gap, word))
             cursor = range.upperBound
         }
@@ -571,6 +589,17 @@ private struct KaraokeLyricText: View {
             result = result + styled(String(content[cursor...]), timing)
         }
         return result
+    }
+
+    /// Kana, CJK ideographs, Thai, Lao, Khmer, Myanmar.
+    private static func spaceless(_ s: String) -> Bool {
+        s.unicodeScalars.contains {
+            switch $0.value {
+            case 0x3040...0x30FF, 0x3400...0x9FFF, 0xF900...0xFAFF, 0xFF66...0xFF9F,
+                 0x0E00...0x0EFF, 0x1780...0x17FF, 0x1000...0x109F: return true
+            default: return false
+            }
+        }
     }
 
     private static func styled(_ text: String, _ timing: SungTiming) -> Text {
