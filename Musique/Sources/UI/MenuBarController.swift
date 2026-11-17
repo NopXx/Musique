@@ -2,12 +2,6 @@ import AppKit
 import SwiftUI
 import Combine
 
-/// A hosting view that is transparent to hit-testing so the underlying
-/// `NSStatusBarButton` receives the click (which opens the status item's menu).
-private final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
-
 @MainActor
 final class MenuBarController {
     private let statusItem: NSStatusItem
@@ -20,7 +14,10 @@ final class MenuBarController {
     private var cancellables = Set<AnyCancellable>()
 
     private var dynamicIslandModel: MenuBarDynamicIslandModel?
-    private var hostingView: PassthroughHostingView<MenuBarDynamicIslandView>?
+    private var islandCancellable: AnyCancellable?
+    /// Where the play/pause glyph sits in the current island image (top-left
+    /// origin); `.zero` when it isn't drawn.
+    private var islandPlayRect: CGRect = .zero
     private var rightClickMonitors: [Any] = []
     private var lastRightClickAt: TimeInterval = 0
     private var currentStyle: String = ""
@@ -62,6 +59,7 @@ final class MenuBarController {
             .sink { [weak self] _ in
                 self?.applyStyle()
                 self?.updateTitle(self?.currentEditedSnap())
+                self?.renderIsland()
             }
             .store(in: &cancellables)
 
@@ -81,30 +79,36 @@ final class MenuBarController {
 
         guard let button = statusItem.button else { return }
 
-        hostingView?.removeFromSuperview()
-        hostingView = nil
+        islandCancellable = nil
         dynamicIslandModel = nil
+        islandPlayRect = .zero
+        button.image = nil
 
         if resolved == "dynamic_island" {
             MusicAudioLevelMonitor.shared.start()
             let model = MenuBarDynamicIslandModel(monitor: playerMonitor)
-            let host = PassthroughHostingView(rootView: MenuBarDynamicIslandView(model: model))
-            host.translatesAutoresizingMaskIntoConstraints = false
             button.title = ""
-            button.image = nil
-            button.addSubview(host)
-            NSLayoutConstraint.activate([
-                host.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-                host.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-                host.topAnchor.constraint(equalTo: button.topAnchor),
-                host.bottomAnchor.constraint(equalTo: button.bottomAnchor),
-            ])
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleNone
             self.dynamicIslandModel = model
-            self.hostingView = host
-            statusItem.length = NSStatusItem.variableLength
+            // objectWillChange fires before the value lands; hop a turn to read it.
+            islandCancellable = model.objectWillChange
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.renderIsland() }
+            renderIsland()
         } else {
-            statusItem.length = NSStatusItem.variableLength
+            button.imagePosition = .noImage   // .imageOnly would hide the text title
         }
+        statusItem.length = NSStatusItem.variableLength
+    }
+
+    private func renderIsland() {
+        guard let model = dynamicIslandModel, let button = statusItem.button else { return }
+        let (image, playRect) = MenuBarIslandRenderer.render(
+            snapshot: model.snapshot, artwork: model.artwork, accent: model.accent,
+            bands: model.bands, showState: SettingsStore.shared.bool(["menubar", "show_state"]))
+        button.image = image
+        islandPlayRect = playRect
     }
 
     private func updateTitle(_ snap: NowPlayingSnapshot?) {
@@ -254,26 +258,23 @@ final class MenuBarController {
         NSApp.terminate(nil)
     }
 
-    /// Hit-test the play/pause icon using its real rendered frame (reported by the
-    /// SwiftUI layout in window coordinates) instead of hard-coded pixel offsets.
-    /// macOS 26 changed status-item geometry, which broke the old fixed-offset math.
+    /// Hit-test the play/pause glyph against where the renderer drew it.
     private func handleIslandClick(in button: NSStatusBarButton) -> Bool {
-        guard SettingsStore.shared.bool(["menubar", "show_state"]) else { return false }
-        guard let iconFrame = dynamicIslandModel?.iconFrame, iconFrame != .zero else { return false }
-        guard let window = button.window else { return false }
+        guard islandPlayRect != .zero, let window = button.window, let image = button.image else { return false }
 
         // `NSApp.currentEvent.locationInWindow` from a status-button action is
-        // always the button centre, not the real click — so use the live cursor
-        // position (`NSEvent.mouseLocation`, screen space, bottom-left origin).
-        // Map it into the window, then flip to top-left to match `iconFrame`
-        // (reported by SwiftUI's `.frame(in: .global)`).
-        let mouse = NSEvent.mouseLocation
-        let localX = mouse.x - window.frame.origin.x
-        let localY = mouse.y - window.frame.origin.y
-        let point = CGPoint(x: localX, y: window.frame.height - localY)
+        // always the button centre, not the real click — so use the live cursor.
+        let inButton = button.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+        // The image is centred in the button; map the click into image space
+        // (top-left origin, like the renderer).
+        let origin = CGPoint(x: (button.bounds.width - image.size.width) / 2,
+                             y: (button.bounds.height - image.size.height) / 2)
+        let y = button.isFlipped ? inButton.y - origin.y
+                                 : button.bounds.height - inButton.y - origin.y
+        let point = CGPoint(x: inButton.x - origin.x, y: y)
 
         // Pad the hit target slightly so the small icon stays comfortably tappable.
-        if iconFrame.insetBy(dx: -6, dy: -6).contains(point) {
+        if islandPlayRect.insetBy(dx: -6, dy: -6).contains(point) {
             MusicAppController.playPause()
             return true
         }
