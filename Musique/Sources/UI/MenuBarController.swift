@@ -152,6 +152,18 @@ final class MenuBarController {
         desktop.state = desktopMiniPlayerController.isEnabled ? .on : .off
         menu.addItem(desktop)
 
+        let update: NSMenuItem
+        if let release = UpdateService.shared.available {
+            update = NSMenuItem(title: L10n.tr("ดาวน์โหลด Musique \(release.version)…",
+                                               "Download Musique \(release.version)…"),
+                                action: #selector(openUpdateAction), keyEquivalent: "")
+        } else {
+            update = NSMenuItem(title: L10n.tr("ตรวจสอบอัปเดต…", "Check for Updates…"),
+                                action: #selector(checkForUpdatesAction), keyEquivalent: "")
+        }
+        update.target = self
+        menu.addItem(update)
+
         let settings = NSMenuItem(title: L10n.tr("ตั้งค่า…", "Settings…"),
                                   action: #selector(openSettingsAction), keyEquivalent: ",")
         settings.target = self
@@ -248,6 +260,14 @@ final class MenuBarController {
 
     @objc private func toggleDesktopMiniPlayerAction() {
         desktopMiniPlayerController.toggle()
+    }
+
+    @objc private func checkForUpdatesAction() {
+        Task { await UpdateService.shared.check(userInitiated: true) }
+    }
+
+    @objc private func openUpdateAction() {
+        UpdateService.shared.openReleasePage()
     }
 
     @objc private func openSettingsAction() {

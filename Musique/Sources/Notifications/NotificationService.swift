@@ -6,6 +6,8 @@ import AppKit
 @MainActor
 final class NotificationService: NSObject, ObservableObject {
     static let shared = NotificationService()
+    /// A notification carrying this in `userInfo` opens that URL when clicked.
+    nonisolated static let openURLKey = "open_url"
 
     private let settings = SettingsStore.shared
     private weak var monitor: PlayerMonitor?
@@ -183,5 +185,15 @@ extension NotificationService: UNUserNotificationCenterDelegate {
                                             willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner])
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        if let s = response.notification.request.content.userInfo[Self.openURLKey] as? String,
+           let url = URL(string: s) {
+            DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+        }
+        completionHandler()
     }
 }

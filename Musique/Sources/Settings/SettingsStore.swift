@@ -24,6 +24,11 @@ final class SettingsStore: ObservableObject {
                 "launch_at_login": false,
                 "show_in_dock": false,
             ],
+            "updates": [
+                "auto_check": true,
+                "notified_version": "",
+                "last_check": 0,
+            ],
             "sources": [
                 "apple_music_enabled": true,
                 "spotify_enabled": true,
