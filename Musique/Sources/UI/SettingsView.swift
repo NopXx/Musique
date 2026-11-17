@@ -60,6 +60,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var language: String
     @Published var launchAtLogin: Bool
     @Published var showInDock: Bool
+    @Published var autoCheckUpdates: Bool
 
     @Published var debugServerEnabled: Bool
     @Published var debugServerPort: Int
@@ -143,6 +144,7 @@ final class SettingsViewModel: ObservableObject {
             store.merge(["general": ["launch_at_login": systemLaunchAtLogin]])
         }
         self.showInDock = store.bool(["general", "show_in_dock"])
+        self.autoCheckUpdates = store.bool(["updates", "auto_check"])
 
         self.debugServerEnabled = store.bool(["debug", "server_enabled"])
         let dport = store.int(["debug", "server_port"])
@@ -386,6 +388,10 @@ final class SettingsViewModel: ObservableObject {
         store.merge(["general": ["launch_at_login": launchAtLogin]])
     }
 
+    func saveAutoCheckUpdates() {
+        store.merge(["updates": ["auto_check": autoCheckUpdates]])
+    }
+
     func saveShowInDock() {
         store.merge(["general": ["show_in_dock": showInDock]])
         AppDelegate.applyDockVisibility()
@@ -498,6 +504,7 @@ struct SettingsView: View {
 
 private struct GeneralTab: View {
     @ObservedObject var vm: SettingsViewModel
+    @ObservedObject private var updates = UpdateService.shared
 
     private var appVersion: String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
@@ -550,6 +557,26 @@ private struct GeneralTab: View {
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
+                }
+
+                CardRow(label: LocalizedStringKey(L10n.tr("ตรวจสอบอัปเดตอัตโนมัติ", "Check for updates automatically"))) {
+                    Toggle("", isOn: $vm.autoCheckUpdates)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .onChange(of: vm.autoCheckUpdates) { _, _ in vm.saveAutoCheckUpdates() }
+                }
+
+                CardRow(label: LocalizedStringKey(L10n.tr("อัปเดต", "Updates"))) {
+                    if let release = updates.available {
+                        Button(L10n.tr("ดาวน์โหลด \(release.version)", "Download \(release.version)")) {
+                            updates.openReleasePage()
+                        }
+                    } else {
+                        Button(L10n.tr("ตรวจสอบเลย", "Check Now")) {
+                            Task { await updates.check(userInitiated: true) }
+                        }
+                        .disabled(updates.checking)
+                    }
                 }
             }
         }

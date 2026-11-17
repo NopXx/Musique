@@ -60,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarController = MenuBarController(playerMonitor: playerMonitor, scrobbler: scrobbler)
         lockScreenController = LockScreenController(playerMonitor: playerMonitor)
         playerMonitor.start()
+        UpdateService.shared.start()
 
         DistributedNotificationCenter.default().addObserver(
             self,
