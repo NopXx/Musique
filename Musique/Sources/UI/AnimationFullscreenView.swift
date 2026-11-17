@@ -307,11 +307,25 @@ struct FullscreenLyricsView: View {
     var anchor: CGFloat = 0.14
 
     var body: some View {
+        let all = displayed
         GeometryReader { geo in
             // Reduce Motion: still keeps time, just stops sweeping per frame.
-            TimelineView(.animation(minimumInterval: reduceMotion ? 0.25 : 1.0 / 30.0,
-                                    paused: !playback.isPlaying)) { context in
-                column(at: playback.livePosition(at: context.date), height: geo.size.height)
+            TimelineView(.animation(minimumInterval: tickInterval, paused: !playback.isPlaying)) { context in
+                let position = playback.livePosition(at: context.date)
+                // The frame only picks which line is sung; the column below is
+                // Equatable, so it re-renders when that changes, not per frame.
+                // Rebuilding every line, shadow and scroll layout 30 times a second
+                // was ~23% of the main thread with the desktop card's panel open.
+                LyricsColumn(lines: all,
+                             current: all.lastIndex { $0.time <= position } ?? 0,
+                             // The scroll spring takes ~0.5s to land; starting it on the
+                             // line's own time put the line in place after its first
+                             // words were sung. Scroll a beat early so it arrives as
+                             // it's sung — the highlight still uses `current`.
+                             target: all.lastIndex { $0.time <= position + Self.scrollLead } ?? 0,
+                             height: geo.size.height, playback: playback, fontSize: fontSize,
+                             spacing: spacing, anchor: anchor, tickInterval: tickInterval)
+                    .equatable()
             }
         }
         // Lines leave through the top and bottom edges; fade them rather than
@@ -324,65 +338,13 @@ struct FullscreenLyricsView: View {
         .clipped()
     }
 
-    private func column(at position: Double, height: CGFloat) -> some View {
-        let all = displayed
-        let current = all.lastIndex { $0.time <= position } ?? 0
-        // The scroll spring takes ~0.5s to land; starting it on the line's own time
-        // put the line in place after its first words were sung. Scroll a beat
-        // early so it arrives as it's sung — the highlight still uses `current`.
-        let target = all.lastIndex { $0.time <= position + Self.scrollLead } ?? 0
-        return ScrollViewReader { proxy in
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: spacing) {
-                    ForEach(all.indices, id: \.self) { n in
-                        line(all[n], distance: abs(n - current), position: position).id(n)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // Air at both ends, or the first and last lines could never reach
-                // the anchor and the column would jerk at the edges of the song.
-                .padding(.vertical, height)
-                // Quick, so the new line brightens on its first word, not after it.
-                .animation(.easeOut(duration: 0.12), value: current)
-            }
-            .scrollDisabled(true)
-            .scrollIndicators(.hidden)
-            .onChange(of: target, initial: true) { _, n in
-                withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                    proxy.scrollTo(n, anchor: UnitPoint(x: 0, y: anchor))
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func line(_ l: LyricLine, distance: Int, position: Double) -> some View {
-        Group {
-            if distance == 0, !l.segments.isEmpty {
-                KaraokeLyricText(line: l, position: position)
-            } else {
-                Text(l.text.isEmpty ? " " : l.text)
-                    .foregroundStyle(.white.opacity(distance == 0 ? 1 : distance <= 2 ? 0.34 : 0.22))
-            }
-        }
-            .font(.system(size: fontSize, weight: .bold))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel(l.text)
-            // The background can be any brightness, and a shadow is cheaper than a
-            // scrim. Per line, not on the column: on the scroll view it cast the
-            // shadow of a box, which showed as grey blocks on a light cover.
-            .shadow(color: .black.opacity(0.45), radius: fontSize * 0.35, x: 0, y: 1)
-    }
+    private var tickInterval: Double { reduceMotion ? 0.25 : 1.0 / 30.0 }
 
     /// `lines` with a dots marker dropped into every stretch of the song nobody
     /// sings through: the intro before the first line, and any instrumental in the
     /// middle. Without one the column sits on a line that finished half a minute
     /// ago, which reads as the sync having broken.
     ///
-    /// ponytail: rebuilt on every frame rather than cached — it's a walk over a few
-    /// dozen lines next to a layout pass. Cache it in the parent if a song ever
-    /// ships thousands.
     private var displayed: [LyricLine] {
         var out: [LyricLine] = []
         if let first = lines.first, first.time > gap {
@@ -403,6 +365,79 @@ struct FullscreenLyricsView: View {
     /// Long enough that the pause is deliberate rather than a singer drawing breath.
     private let gap = 5.0
     private let dots = "• • •"
+}
+
+/// `FullscreenLyricsView`'s scrolling column, re-rendered only when the sung
+/// line (or the track's clock) changes. The sung line runs its own timeline,
+/// so the per-frame work is that one line's wipe.
+private struct LyricsColumn: View, Equatable {
+    let lines: [LyricLine]
+    let current: Int
+    let target: Int
+    let height: CGFloat
+    let playback: NowPlayingSnapshot
+    let fontSize: CGFloat
+    let spacing: CGFloat
+    let anchor: CGFloat
+    let tickInterval: Double
+
+    static func == (a: Self, b: Self) -> Bool {
+        a.current == b.current && a.target == b.target && a.height == b.height
+            && a.fontSize == b.fontSize && a.spacing == b.spacing && a.anchor == b.anchor
+            && a.tickInterval == b.tickInterval && a.lines == b.lines
+            // What the sung line's clock projects from.
+            && a.playback.isPlaying == b.playback.isPlaying
+            && a.playback.position == b.playback.position
+            && a.playback.positionDate == b.playback.positionDate
+            && a.playback.duration == b.playback.duration
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: spacing) {
+                    ForEach(lines.indices, id: \.self) { n in
+                        line(lines[n], distance: abs(n - current)).id(n)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Air at both ends, or the first and last lines could never reach
+                // the anchor and the column would jerk at the edges of the song.
+                .padding(.vertical, height)
+                // Quick, so the new line brightens on its first word, not after it.
+                .animation(.easeOut(duration: 0.12), value: current)
+            }
+            .scrollDisabled(true)
+            .scrollIndicators(.hidden)
+            .onChange(of: target, initial: true) { _, n in
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                    proxy.scrollTo(n, anchor: UnitPoint(x: 0, y: anchor))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func line(_ l: LyricLine, distance: Int) -> some View {
+        Group {
+            if distance == 0, !l.segments.isEmpty {
+                TimelineView(.animation(minimumInterval: tickInterval, paused: !playback.isPlaying)) { context in
+                    KaraokeLyricText(line: l, position: playback.livePosition(at: context.date))
+                }
+            } else {
+                Text(l.text.isEmpty ? " " : l.text)
+                    .foregroundStyle(.white.opacity(distance == 0 ? 1 : distance <= 2 ? 0.34 : 0.22))
+            }
+        }
+            .font(.system(size: fontSize, weight: .bold))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(l.text)
+            // The background can be any brightness, and a shadow is cheaper than a
+            // scrim. Per line, not on the column: on the scroll view it cast the
+            // shadow of a box, which showed as grey blocks on a light cover.
+            .shadow(color: .black.opacity(0.45), radius: fontSize * 0.35, x: 0, y: 1)
+    }
 }
 
 /// The sung line: every syllable drawn grey, then white over it up to how far
