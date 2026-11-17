@@ -8,6 +8,7 @@ struct AnimationFullscreenView: View {
     /// cover art must not end it — there the corner button and Esc are the way out.
     var dismissOnTap: Bool = false
     let onDismiss: () -> Void
+    @State private var pendingClose: Task<Void, Never>?
 
     @State private var lyrics: [LyricLine] = []
     /// Holds the split layout up across a track change. Without it the fetch's own
@@ -141,9 +142,20 @@ struct AnimationFullscreenView: View {
             onDismiss()
             return .handled
         }
+        // Close once playback has really stopped. A player reports "stopped" for
+        // a moment while it changes track (skip, or a song picked in the app),
+        // and closing on that blip shut fullscreen on every manual track change.
+        // Only a track *going away* starts the wait, so opening with nothing
+        // playing still stays open.
         .onChange(of: viewModel.snapshot?.hasTrack ?? false) { _, hasTrack in
-            if !hasTrack { onDismiss() }
+            pendingClose?.cancel()
+            guard !hasTrack else { return }
+            pendingClose = Task {
+                try? await Task.sleep(for: .seconds(3))
+                if !Task.isCancelled { onDismiss() }
+            }
         }
+        .onDisappear { pendingClose?.cancel() }
         // Keyed on the track, so a fetch is one per song and the previous song's
         // lines are dropped the moment the next one starts.
         .task(id: trackKey) {
