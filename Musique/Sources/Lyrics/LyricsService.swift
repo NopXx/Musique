@@ -28,6 +28,19 @@ struct LyricLine: Equatable, Encodable {
     /// Backing vocals (TTML `x-bg`), shown on a smaller row under the line.
     var background: [TimedLyricSegment] = []
     var backgroundText = ""
+    /// Where the lines came from, credited under the last one.
+    var provider: LyricsProvider = .lrclib
+}
+
+enum LyricsProvider: String, Encodable {
+    case appleMusic, lrclib
+
+    var displayName: String {
+        switch self {
+        case .appleMusic: return "Apple Music"
+        case .lrclib:     return "LRCLIB"
+        }
+    }
 }
 
 enum AppleMusicMetadataMatcher {
@@ -482,11 +495,12 @@ private actor AppleMusicLyricsClient {
                                       start: $0.startTime,
                                       end: $0.endTime)
                 }
-                return BackgroundVocals.split(LyricLine(time: first.startTime,
-                                                        end: line.segments.last?.endTime,
-                                                        text: line.text,
-                                                        segments: segments),
-                                             keys: background)
+                var parsed = LyricLine(time: first.startTime,
+                                       end: line.segments.last?.endTime,
+                                       text: line.text,
+                                       segments: segments)
+                parsed.provider = .appleMusic
+                return BackgroundVocals.split(parsed, keys: background)
             }
             .sorted { $0.time < $1.time }
     }

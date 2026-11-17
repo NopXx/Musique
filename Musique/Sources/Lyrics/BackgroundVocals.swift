@@ -62,6 +62,7 @@ enum BackgroundVocals {
                             segments: Array(line.segments[..<first]) + line.segments[(last + 1)...])
         out.background = bg
         out.backgroundText = bgText
+        out.provider = line.provider
         return out
     }
 

@@ -430,6 +430,14 @@ private struct LyricsColumn: View, Equatable {
                         line(lines[n], distance: abs(n - current),
                              sung: n == current || lingering.contains(n)).id(n)
                     }
+                    // The last line, not the first: the intro's dots marker isn't from anyone.
+                    if let provider = lines.last?.provider {
+                        Text(L10n.tr("เนื้อเพลงจาก \(provider.displayName)",
+                                     "Lyrics from \(provider.displayName)"))
+                            .font(.system(size: max(10, fontSize * 0.45), weight: .medium))
+                            .foregroundStyle(.white.opacity(0.4))
+                            .padding(.top, spacing)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Air at both ends, or the first and last lines could never reach
