@@ -45,6 +45,9 @@ final class DesktopMiniPlayerController {
         guard isEnabled else {
             panel?.close()
             panel = nil
+            // The next panel is built empty; forget the old style so `applyStyle` fills it.
+            style = ""
+            leftGrowth = 0
             return
         }
         let panel = self.panel ?? makePanel()
