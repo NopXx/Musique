@@ -567,9 +567,11 @@ private struct GeneralTab: View {
                 }
 
                 CardRow(label: LocalizedStringKey(L10n.tr("อัปเดต", "Updates"))) {
-                    if let release = updates.available {
-                        Button(L10n.tr("ดาวน์โหลด \(release.version)", "Download \(release.version)")) {
-                            updates.openReleasePage()
+                    if updates.installing {
+                        ProgressView().controlSize(.small)
+                    } else if let release = updates.available {
+                        Button(L10n.tr("ติดตั้ง \(release.version)", "Install \(release.version)")) {
+                            updates.offerAvailable()
                         }
                     } else {
                         Button(L10n.tr("ตรวจสอบเลย", "Check Now")) {
